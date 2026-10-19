@@ -1,4 +1,6 @@
-# hardware-verification-plan
+# engineering-verification-skill
+
+(skill 이름은 `hardware-verification-plan`이다. 설치 경로와 skill 이름은 그대로 쓴다.)
 
 실물 엔지니어링 프로젝트(CAD 기구, 조립체, 공정 기계, 3D 출력·가공 부품, 펌웨어·제어)를 AI 에이전트가 검증·테스트·수정할 수 있게 하는 Claude skill이다. 방법론 문서와 함께, 검증 절차와 검증 결과에 근거한 설계 수정 루프를 실제로 돌리는 도구 10종과 그 도구의 자체 시험을 담고 있다.
 
@@ -152,4 +154,6 @@ python3 $S/hvp_fixloop.py show --sid agent-1 --issue I-1 --md           # 시도
 - `selftest.py` 53/53 통과: Linux, Python 3.13, git 2.43. 수정 루프 도구는 도구 결함 6종을 일부러 심어 시험이 그 결함을 잡는지 확인했고, 모의 저장소에서 runbook 9절 순서를 처음부터 끝까지 실행했다.
 - 시험하지 못한 것: macOS의 `lsof` 경로, FreeCAD 헤드리스 드라이버, nix 환경과 실제 저장소의 pre-push 훅. 해당 환경에서 `selftest.py`를 먼저 돌린다.
 
-라이선스는 아직 정하지 않았다.
+## 라이선스
+
+[GNU General Public License v3.0](LICENSE) (GPL-3.0-or-later). 이 저장소의 문서와 스크립트를 복사·수정·배포할 수 있고, 수정본을 배포할 때는 같은 GPL v3 조건으로 소스를 공개해야 한다. 이 skill로 만든 검증 결과나 대상 프로젝트의 파일에는 라이선스가 전염되지 않는다.
