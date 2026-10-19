@@ -13,6 +13,7 @@ SKILL.md 1·6·7·8·9단계의 실행 절차. 반복되는 점검은 `scripts/`
 6. 커밋 스냅샷 검증
 7. 증거 무결성 규칙
 8. 제작 착수 준비 절차
+9. 설계 수정 루프
 
 ---
 
@@ -28,6 +29,10 @@ SKILL.md 1·6·7·8·9단계의 실행 절차. 반복되는 점검은 `scripts/`
 | `hvp_compare.py` | 증거 JSON 두 개의 의미 비교 | 0 EQUIVALENT, 1 DIFFERENT |
 | `hvp_stagecheck.py` | 커밋 직전 스테이지 점검 | 0 CLEAN, 1 해결 필요 |
 | `hvp_snapshot.py` | 인덱스 그대로의 스냅샷에서 스위트 실행 | 스위트 종료 코드 |
+| `hvp_impact.py` | 바꿀 경로에 의존하는 증거(직접·전이)와 재실행 순서, 해시 기록 없는 의존 | 0 정상, 3 입력 오류 |
+| `hvp_sweep.py` | 후보 값마다 임시 worktree에서 1차 오라클 실행, 하한·목표 도달 값과 단조성 | 0 목표 도달, 1 미도달, 2 실행 실패 |
+| `hvp_verdicts.py` | 수정 전후 판정 비교: FIXED, REGRESSED, LOST, MARGIN_DROP, CRITERIA_CHANGED, INCONSISTENT | 0 ACCEPTABLE, 1 NOT_ACCEPTABLE |
+| `hvp_fixloop.py` | 이슈별 시도 기록, 예산·반복·결합·진동·정체 감지 | 0 계속, 3 멈춤 |
 | `selftest.py` | 위 도구들의 known-answer 자체 시험(임시 저장소에서) | 0 전부 통과 |
 
 **처음 쓰는 환경에서는 자체 시험부터 돌린다.** 검사기를 믿기 전에 정답을 아는 입력으로 확인한다는 skill의 원칙을 도구 자신에게도 적용한다.
@@ -36,7 +41,7 @@ SKILL.md 1·6·7·8·9단계의 실행 절차. 반복되는 점검은 `scripts/`
 python3 $S/selftest.py            # SELFTEST n/n passed 가 나와야 한다. -v 로 상세 출력
 ```
 
-자체 시험이 확인하는 것: 물리량 키(`bolt_head_diameter_mm`, `fault_duration_s`)를 휘발성으로 오인하지 않음, 휘발성만 바뀐 증거는 EQUIVALENT, 두 기록 형식의 STALE 검출과 재생성 순서, 동시 세션 잠금·외부 프로세스 검출과 자기 명령 제외, worktree 안에서의 세션 종료, 남의 파일·대용량·원시 산출물 검출, 연결된 worktree에서의 훅 탐색, 미추적 입력 때문에 작업 트리와 스냅샷 결과가 갈리는 경우, 두 시드 일치를 결정론으로 오인하지 않음.
+자체 시험이 확인하는 것: 물리량 키(`bolt_head_diameter_mm`, `fault_duration_s`)를 휘발성으로 오인하지 않음, 휘발성만 바뀐 증거는 EQUIVALENT, 두 기록 형식의 STALE 검출과 재생성 순서, 동시 세션 잠금·외부 프로세스 검출과 자기 명령 제외, worktree 안에서의 세션 종료, 남의 파일·대용량·원시 산출물 검출, 연결된 worktree에서의 훅 탐색, 미추적 입력 때문에 작업 트리와 스냅샷 결과가 갈리는 경우, 두 시드 일치를 결정론으로 오인하지 않음. 수정 루프 도구: 목표 미달로 내려간 판정을 REGRESSED로, 지운 증거를 LOST로, 기준 완화를 CRITERIA_CHANGED로, 지표와 어긋난 자기 보고 PASS를 INCONSISTENT로 잡음, 전이 의존과 층을 넘는 재실행 순서, 해시 기록 없는 의존, 작업 중 후보(수정 + 새 파일)를 스윕이 그대로 평가함, 비단조 응답, 번갈아 깨지는 두 검사와 반복 파라미터 감지, 대상 저장소를 바꾸지 않음.
 
 에이전트 도구는 보통 명령마다 새 셸을 연다. 앞 명령에서 정한 변수는 남지 않는다. 세션 값(worktree 경로, 시작 HEAD)은 잠금 파일에 있으니 `hvp_session.py get`으로 다시 읽는다.
 
@@ -80,7 +85,7 @@ python3 $S/hvp_session.py end     --sid $SID          # 깨끗한 worktree만 �
 
 - `if __name__ == "__main__":` 가드가 있는 파일을 `exec`나 import로 부르면 본문이 돌지 않는다. `python3 path/to/script.py`로 실행하거나 `runpy.run_path(path, run_name="__main__")`을 쓴다.
 - 패키지 안 모듈은 저장소 루트에서 `python3 -m pkg.module`로 실행한다. 경로를 점 표기로 바꿀 때 실제 디렉터리 이름을 저장소에서 확인한다.
-- 형제 모듈 import가 깨지면, 해시로 고정된 소스(SKILL.md 7.3)는 고치지 않는다. 호출하는 쪽에서 `PYTHONPATH` 또는 `sys.path`로 해결한다.
+- 형제 모듈 import가 깨지면, 해시로 고정된 소스(SKILL.md 7.6)는 고치지 않는다. 호출하는 쪽에서 `PYTHONPATH` 또는 `sys.path`로 해결한다.
 
 **FreeCAD 헤드리스(freecadcmd)**
 
@@ -210,3 +215,91 @@ python3 $S/hvp_snapshot.py --cmd "<훅이 돌리는 명령 그대로, 같은 환
    - **기능 시험**: 의도 동작을 실물로 확인하는 최소 시험(손 구동 행정, 무부하 회전, 소재 투입)을 lockout 조건과 함께 적는다.
    - **재판정 연결**: 측정 항목마다 그 값을 입력으로 쓰는 판정(간섭 쌍, 안전율, 열 계수)을 적고, 실측값이 들어오면 그 판정을 다시 돌린다. 저장소에 연결 장치가 없으면 재실행 명령 목록을 적는다. 실측값은 불일치 대장(7a)에도 들어간다.
 5. **제작 패키지**: 7절 7항.
+
+## 9. 설계 수정 루프
+
+SKILL.md 7단계의 명령 순서다. 이슈 하나(근본 원인 하나)에 대해 아래를 한 바퀴 돈다. `$SID`는 세션 ID, `$I`는 이슈 ID(예: `I-clear-cam-1`), `$T`는 세션 스크래치 디렉터리(저장소 밖)다.
+
+**9.1 열기**
+
+```sh
+python3 $S/hvp_session.py start --sid $SID          # 동시 세션이면 isolate 후 그 worktree에서
+python3 $S/hvp_fixloop.py open --sid $SID --issue $I --checks <대상 검사 id,...> \
+    --cause "<원인 한 줄, 수치 포함>" [--budget 3]   # 시작 커밋이 기록된다
+```
+
+- 대상 검사 id는 증거 파일 경로(목록 항목이면 `경로#id`)다. `hvp_verdicts.py --json`의 키와 같다.
+- 증거를 git이 추적하지 않으면(무시된 결과 디렉터리) 지금 스냅샷을 떠 둔다. 이후 비교는 `--before dir:$T/before-$I --after dir:.`로 한다.
+
+  ```sh
+  mkdir -p $T/before-$I && tar -cf - <결과 디렉터리> | tar -xf - -C $T/before-$I
+  ```
+
+**9.2 원인 가설 확인(수정 전)**
+
+- 7.2의 예측("p를 Δ 바꾸면 m이 약 Δm")을 두 점 스윕으로 확인한다.
+
+  ```sh
+  python3 $S/hvp_sweep.py --cmd "<빌더 --p {value}> && <1차 오라클>" --out <증거> --metric <m> \
+      --values <현재값>,<현재값+Δ> --report $T/probe-$I.json
+  ```
+
+- 방향이나 크기가 예측과 크게 다르면(부호가 반대이거나 크기가 절반 미만·두 배 초과) 가설을 버린다.
+- 빌더가 파라미터를 명령줄로 받지 않으면, 파라미터 파일을 고치는 한 줄 명령을 `--cmd` 앞에 둔다(예: `python3 -c "..." && ...`). worktree는 임시라 작업 트리는 바뀌지 않는다.
+
+**9.3 후보와 크기**
+
+```sh
+python3 $S/hvp_impact.py <후보가 바꿀 경로...>       # 후보마다: 재실행 목록과 UNTRACKED_DEPENDENCY
+python3 $S/hvp_sweep.py --cmd "..." --out <증거> --metric <m> --values v1,v2,v3,v4,v5 \
+    --report $T/sweep-$I-<후보>.json
+```
+
+- 출력의 FIRST_LIMIT, FIRST_TARGET, MONOTONIC, TRANSITION을 1d 비교표에 옮긴다. 값 고르기와 해석은 oracle-catalog 31절에 있다.
+- 부작용이 예상되는 지표(30절 표의 "흔한 부작용")도 같은 값으로 스윕해 둔다.
+- 후보 선택이 사용자 결정 항목(SKILL.md 7.5)이면 여기서 멈추고 비교표를 낸다.
+
+**9.4 적용**
+
+```sh
+python3 $S/hvp_stale.py --file <바꿀 파일>           # 해시 고정 확인
+# 빌더·파라미터 파일 수정(단일 출처)
+python3 $S/hvp_session.py touch --sid $SID <바꾼 경로...>
+```
+
+**9.5 재검증**
+
+```sh
+python3 $S/hvp_stale.py                              # ORDER대로 재생성, STALE 0까지 반복
+# IMPACTED 목록(앞 층부터) + 1차 층 L0–L2 전체 + 부작용 검사 재실행
+python3 $S/hvp_verdicts.py --before git:<시작 커밋> --expect-fixed <대상 id> --json > $T/v-$I-<n>.json
+python3 $S/hvp_verdicts.py --before git:<시작 커밋> --expect-fixed <대상 id>   # 사람이 읽는 출력
+```
+
+- 시작 커밋은 `hvp_fixloop.py show --sid $SID --issue $I`의 `start_commit`이다. 모든 시도를 같은 기준에서 비교한다.
+- 출력 읽기:
+  - REGRESSED·LOST가 있으면 그 시도는 수락하지 않는다. 고칠 대상이 늘어난 것이다. 같은 이슈의 다음 시도에서 함께 다루거나, 원인이 다르면 새 이슈를 연다.
+  - CRITERIA_CHANGED는 기준을 바꾼 증거가 있다는 뜻이다. 사용자가 승인한 요구 변경일 때만 `--allow-criteria`를 쓰고 그 승인을 보고에 적는다.
+  - INCONSISTENT는 검사기가 자기 지표와 다른 상태를 썼다는 뜻이다. 검사기 결함으로 분류한다(SKILL.md 6단계).
+  - MARGIN_DROP은 원인과 남은 여유를 보고에 적는다.
+- 개선 수정(7.14)은 `--strict-margin`을 더한다.
+- 바꾼 검사기는 3절 결정론 이중 실행을 다시 한다. ACCEPTABLE인 형상에서만 2차 도구를 돌린다.
+
+**9.6 시도 기록과 루프 제어**
+
+```sh
+python3 $S/hvp_fixloop.py attempt --sid $SID --issue $I --change "<무엇을 바꿨나>" \
+    --params <p>=<값> ... --verdicts $T/v-$I-<n>.json      # 기록 후 바로 CONTINUE/STOP 판정
+```
+
+- CONTINUE이고 판정이 NOT_ACCEPTABLE이면 9.2(가설) 또는 9.3(후보)으로 돌아간다. 같은 파라미터 값을 다시 쓰지 않는다.
+- STOP이면 더 고치지 않는다. 사유별 다음 행동은 SKILL.md 7.10 표에 있다. COUPLED는 oracle-catalog 31절의 격자 스윕으로 넘어간다.
+- 실패한 시도의 변경은 파일 단위로 되돌린다(`git restore --source=<시작 커밋> -- <path>`). 그 시도로 재생성한 증거도 함께 되돌린다. 남겨 둔 채 다음 시도를 덧붙이지 않는다.
+
+**9.7 반증, 기록, 커밋, 닫기**
+
+- 반증(SKILL.md 7.9): 고친 판정의 입력 극단(공차 Monte Carlo 극단값, 표본 사이 위상, 다른 시드)으로 같은 오라클을 돌린다. 찾은 실패는 테스트 케이스로 추가한다.
+- 기록: 1c 수정 보고, 1d 비교표, 7b 시도 이력(`hvp_fixloop.py show --sid $SID --issue $I --md`), 7a 불일치 대장, 형상이 바뀐 부품의 검증 상태 하향(VALIDATED → VERIFIED)과 L5 재측정 목록(9c).
+- 커밋: 5·6절(스테이지 점검, 스냅샷 검증). 근본 원인 하나당 커밋 하나다.
+- 닫기: `python3 $S/hvp_fixloop.py close --sid $SID --issue $I --result fixed|escalated|abandoned --note "<요약>"`.
+- 시도 기록은 세션 잠금 옆(`<git-common-dir>/hvp-sessions/$SID.fixlog.json`)에 있다. `hvp_session.py end`가 지우지 않지만 저장소에 커밋되지도 않는다. 남길 내용은 7b로 옮긴다.

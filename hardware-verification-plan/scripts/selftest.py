@@ -52,6 +52,176 @@ def sha(path):
     return hashlib.sha256(open(path, "rb").read()).hexdigest()
 
 
+def new_repo(root, name):
+    r = os.path.join(root, name)
+    os.makedirs(os.path.join(r, "results"))
+    sh("git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false", r)
+    open(os.path.join(r, "results/.keep"), "w").write("")
+    sh("git add -A && git commit -qm init", r)
+    return r
+
+
+def metric(v, lim, tgt, sense="min"):
+    return {"value": v, "limit": lim, "target": tgt, "sense": sense}
+
+
+def fix_cases(root):
+    # ------------------------------------------------ verdicts
+    rv = new_repo(root, "repo-verdicts")
+    W = lambda rel, obj: write_json(os.path.join(rv, rel), obj)  # noqa: E731
+    W("results/clear.json", {"status": "FAIL", "layer": "L2", "metrics": {"min_clearance_mm": metric(-0.45, 0.2, 0.5)}})
+    W("results/strength.json", {"status": "PASS", "layer": "L3", "metrics": {"sf": metric(1.8, 1.0, 1.5)}})
+    W("results/insert.json", {"status": "PASS", "layer": "L3", "metrics": {"sf": metric(2.0, 1.0, 1.5)}})
+    W("results/motion.json", {"status": "PASS", "layer": "L1"})
+    W("results/crit.json", {"status": "PASS", "metrics": {"deflection_mm": metric(0.3, 0.5, 0.4, "max")}})
+    W("results/multi.json", {"checks": [{"id": "mesh", "status": "PASS", "metrics": {"contact_ratio": metric(1.4, 1.2, 1.3)}},
+                                        {"id": "backlash", "status": "FAIL", "metrics": {"b_mm": metric(0.3, 0.2, 0.1, "max")}}]})
+    W("results/notes.json", {"comment": "no verdict here"})
+    sh("git add -A && git commit -qm before", rv)
+    base_rev = subprocess.run(["git", "rev-parse", "HEAD"], cwd=rv, capture_output=True, text=True).stdout.strip()
+    W("results/clear.json", {"status": "PASS", "layer": "L2", "metrics": {"min_clearance_mm": metric(0.6, 0.2, 0.5)}})
+    W("results/strength.json", {"status": "PASS_BELOW_TARGET", "layer": "L3", "metrics": {"sf": metric(1.2, 1.0, 1.5)}})
+    W("results/insert.json", {"status": "PASS", "layer": "L3", "metrics": {"sf": metric(1.7, 1.0, 1.5)}})
+    os.remove(os.path.join(rv, "results/motion.json"))
+    W("results/crit.json", {"status": "PASS", "metrics": {"deflection_mm": metric(0.3, 0.8, 0.4, "max")}})
+    W("results/multi.json", {"checks": [{"id": "mesh", "status": "PASS", "metrics": {"contact_ratio": metric(1.1, 1.2, 1.3)}},
+                                        {"id": "backlash", "status": "FAIL", "metrics": {"b_mm": metric(0.3, 0.2, 0.1, "max")}}]})
+    rc, out = run(["hvp_verdicts.py", "--json"], rv)
+    o = json.loads(out[out.index("{"):]) if "{" in out else {"checks": {}}
+    ck = o.get("checks", {})
+    g = lambda cid: (ck.get(cid, {}).get("class"), ck.get(cid, {}).get("flags", []))  # noqa: E731
+    case("verdicts: FAIL->PASS is FIXED, PASS->PASS_BELOW_TARGET is REGRESSED",
+         g("results/clear.json")[0] == "FIXED" and g("results/strength.json")[0] == "REGRESSED", out)
+    case("verdicts: deleted evidence is LOST", g("results/motion.json")[0] == "LOST", out)
+    case("verdicts: same status, margin 1.0 -> 0.7 is MARGIN_DROP", "MARGIN_DROP" in g("results/insert.json")[1], out)
+    case("verdicts: loosened limit is CRITERIA_CHANGED, not a pass", "CRITERIA_CHANGED" in g("results/crit.json")[1], out)
+    case("verdicts: PASS recorded over a failing metric is INCONSISTENT",
+         "INCONSISTENT" in g("results/multi.json#mesh")[1] and g("results/multi.json#backlash")[0] == "UNCHANGED", out)
+    case("verdicts: files without a verdict ignored; NOT_ACCEPTABLE exit 1",
+         "results/notes.json" not in ck and rc == 1 and o.get("verdict") == "NOT_ACCEPTABLE", out)
+    sh("git checkout -q -- results", rv)
+    W("results/clear.json", {"status": "PASS", "layer": "L2", "metrics": {"min_clearance_mm": metric(0.6, 0.2, 0.5)}})
+    rc, out = run(["hvp_verdicts.py", "--expect-fixed", "results/clear.json"], rv)
+    case("verdicts: clean fix with --expect-fixed is ACCEPTABLE", rc == 0 and "VERDICT ACCEPTABLE" in out, out)
+    W("results/clear.json", {"status": "PASS_BELOW_TARGET", "layer": "L2", "metrics": {"min_clearance_mm": metric(0.3, 0.2, 0.5)}})
+    rc, out = run(["hvp_verdicts.py", "--expect-fixed", "results/clear.json"], rv)
+    rc2, out2 = run(["hvp_verdicts.py", "--expect-fixed", "results/clear.json", "--accept-below-target"], rv)
+    case("verdicts: below-target fix needs --accept-below-target", rc == 1 and "expected fix not reached" in out
+         and rc2 == 0, out + out2)
+    snap = os.path.join(root, "before-snap")
+    os.makedirs(snap)
+    subprocess.run("git archive HEAD results | tar -x -C '%s'" % snap, shell=True, cwd=rv, check=True)
+    rc3, out3 = run(["hvp_verdicts.py", "--before", "dir:" + snap, "--after", "dir:.", "--expect-fixed",
+                     "results/clear.json", "--accept-below-target"], rv)
+    case("verdicts: dir: snapshots give the same answer as git revisions", rc3 == 0 and "FIXED" in out3
+         and "results/clear.json" in out3, out3)
+    sh("git checkout -q -- results", rv)
+
+    # ------------------------------------------------ impact
+    ri = new_repo(root, "repo-impact")
+    os.makedirs(os.path.join(ri, "src")); os.makedirs(os.path.join(ri, "ev"))
+    for n in "abc":
+        open(os.path.join(ri, "src/%s.py" % n), "w").write("# %s\n" % n)
+    write_json(os.path.join(ri, "ev/e1.json"), {"layer": "L2", "inputs": {"src/a.py": sha(os.path.join(ri, "src/a.py"))}})
+    write_json(os.path.join(ri, "ev/e2.json"), {"layer": "L1", "inputs": {"ev/e1.json": sha(os.path.join(ri, "ev/e1.json"))}})
+    write_json(os.path.join(ri, "ev/e3.json"), {"layer": "L0", "inputs": {"src/b.py": sha(os.path.join(ri, "src/b.py"))}})
+    write_json(os.path.join(ri, "ev/e4.json"), {"note": "reads src/a.py at import"})
+    sh("git add -A && git commit -qm ev", ri)
+    rc, out = run(["hvp_impact.py", "src/a.py"], ri)
+    lines = [l for l in out.splitlines() if l.startswith("IMPACTED")]
+    case("impact: direct and transitive dependents, not unrelated evidence",
+         any("ev/e1.json" in l for l in lines) and any("ev/e2.json" in l for l in lines)
+         and not any("ev/e3.json" in l for l in lines), out)
+    case("impact: dependency before dependent even across layers (L2 e1 before L1 e2)",
+         len(lines) == 2 and lines[0].split()[2] == "ev/e1.json" and lines[1].split()[2] == "ev/e2.json", out)
+    case("impact: text-only mention reported as MENTIONED", "MENTIONED ev/e4.json -> src/a.py" in out, out)
+    rc, out = run(["hvp_impact.py", "src/c.py"], ri)
+    case("impact: path recorded by no evidence is UNTRACKED_DEPENDENCY", "UNTRACKED_DEPENDENCY src/c.py" in out
+         and "impacted=0" in out, out)
+    open(os.path.join(ri, "src/b.py"), "w").write("# b2\n")
+    rc, out = run(["hvp_impact.py", "--diff"], ri)
+    case("impact --diff: uncommitted edit found", "ev/e3.json" in out and "CHANGED src/b.py" in out, out)
+    sh("git checkout -q -- src", ri)
+
+    # ------------------------------------------------ sweep
+    rs = new_repo(root, "repo-sweep")
+    os.makedirs(os.path.join(rs, "tools"))
+    open(os.path.join(rs, "tools/clear.py"), "w").write(
+        "import json,sys\nOFF=0.3\ngap=float(sys.argv[1])\n"
+        "json.dump({'metrics':{'c':{'value':round(gap-OFF,6),'limit':0.0,'target':0.2,'sense':'min'}}},"
+        "open('results/s.json','w'))\n")
+    open(os.path.join(rs, "tools/peak.py"), "w").write(
+        "import json,sys\ngap=float(sys.argv[1])\n"
+        "json.dump({'metrics':{'c':{'value':round(0.2-10*(gap-0.4)**2,6),'limit':0.0,'target':0.1}}},"
+        "open('results/s.json','w'))\n")
+    sh("git add -A && git commit -qm tools", rs)
+    sweep = ["hvp_sweep.py", "--cmd", "python3 tools/clear.py {value}", "--out", "results/s.json", "--metric", "c",
+             "--values", "0.2,0.4,0.6"]
+    rc, out = run(sweep, rs)
+    case("sweep: statuses, first limit/target and monotonicity",
+         rc == 0 and "FIRST_LIMIT 0.4" in out and "FIRST_TARGET 0.6" in out and "MONOTONIC increasing" in out
+         and "TRANSITION between 0.2 (FAIL) and 0.4 (PASS_BELOW_TARGET)" in out, out)
+    case("sweep: working tree untouched", not os.path.exists(os.path.join(rs, "results/s.json")), out)
+    src = open(os.path.join(rs, "tools/clear.py")).read()
+    # candidate = tracked edit + a new untracked module it imports
+    open(os.path.join(rs, "tools/clear.py"), "w").write(src.replace("OFF=0.3", "from off import OFF"))
+    open(os.path.join(rs, "tools/off.py"), "w").write("OFF=0.5\n")
+    rc, out = run(sweep, rs)
+    rc2, out2 = run(sweep + ["--commit", "HEAD"], rs)
+    case("sweep: uncommitted candidate (edit + new file) is what gets evaluated; --commit uses the commit only",
+         rc == 1 and "FIRST_TARGET none" in out and rc2 == 0 and "FIRST_TARGET 0.6" in out2, out + out2)
+    sh("git checkout -q -- tools && rm -f tools/off.py", rs)
+    rc, out = run(["hvp_sweep.py", "--cmd", "python3 tools/peak.py {value}", "--out", "results/s.json", "--metric", "c",
+                   "--values", "0.2,0.4,0.6"], rs)
+    case("sweep: non-monotonic response flagged", "MONOTONIC no" in out and "not monotonic" in out, out)
+    rc, out = run(["hvp_sweep.py", "--cmd", "exit 1", "--out", "results/s.json", "--metric", "c", "--values", "1,2"], rs)
+    case("sweep: failed run -> exit 2", rc == 2 and "RUN_FAILED" in out, out)
+    wts = subprocess.run(["git", "worktree", "list"], cwd=rs, capture_output=True, text=True).stdout.strip().splitlines()
+    case("sweep: temporary worktrees removed", len(wts) == 1, "\n".join(wts))
+
+    # ------------------------------------------------ fixloop
+    def vfile(name, rows):
+        pth = os.path.join(root, name)
+        write_json(pth, {"verdict": "NOT_ACCEPTABLE", "checks": {c: {"before": b, "after": a_, "class": k}
+                                                                for c, (b, a_, k) in rows.items()}})
+        return pth
+    v1 = vfile("v1.json", {"A": ("FAIL", "PASS", "FIXED"), "B": ("PASS", "FAIL", "REGRESSED")})
+    v1w = os.path.join(root, "v1w.json")
+    write_json(v1w, {"verdict": "ACCEPTABLE", "checks": {
+        "A": {"before": "FAIL", "after": "PASS", "class": "FIXED", "flags": []},
+        "results/wall.json": {"before": "PASS", "after": "PASS", "class": "UNCHANGED", "flags": ["MARGIN_DROP"]}}})
+    v2 = vfile("v2.json", {"A": ("FAIL", "FAIL", "UNCHANGED"), "B": ("PASS", "PASS", "UNCHANGED")})
+    FL = lambda *x: run(["hvp_fixloop.py"] + list(x) + ["--sid", "F"], rv)  # noqa: E731
+    FL("open", "--issue", "I1", "--checks", "A", "--cause", "A interferes")
+    rc, out = FL("attempt", "--issue", "I1", "--change", "move A", "--params", "gap=0.4", "--verdicts", v1)
+    case("fixloop: first attempt -> CONTINUE", rc == 0 and "CONTINUE 1/3" in out, out)
+    rc, out = FL("attempt", "--issue", "I1", "--change", "move B back", "--params", "gap=0.5", "--verdicts", v2)
+    case("fixloop: fix A breaks B, fix B breaks A -> STOP COUPLED", rc == 3 and "COUPLED A <-> B" in out
+         and "OSCILLATING A" in out, out)
+    FL("open", "--issue", "I2", "--checks", "A", "--cause", "x")
+    FL("attempt", "--issue", "I2", "--change", "c1", "--params", "gap=0.4", "--verdicts", v1)
+    FL("attempt", "--issue", "I2", "--change", "c2", "--params", "gap=0.7", "--verdicts", v1)
+    rc, out = FL("attempt", "--issue", "I2", "--change", "c3", "--params", "gap=0.4", "--verdicts", v1)
+    case("fixloop: same parameters tried again -> REPEAT", rc == 3 and "REPEAT attempt 3" in out, out)
+    FL("open", "--issue", "I3", "--checks", "A", "--cause", "x", "--budget", "2")
+    FL("attempt", "--issue", "I3", "--change", "c1", "--params", "gap=0.4", "--verdicts", v1)
+    rc, out = FL("attempt", "--issue", "I3", "--change", "c2", "--params", "gap=0.6", "--verdicts", v1)
+    case("fixloop: budget exhausted -> STOP BUDGET only", rc == 3 and "BUDGET 2/2" in out and "REPEAT" not in out
+         and "COUPLED" not in out, out)
+    FL("open", "--issue", "I4", "--checks", "A", "--cause", "x")
+    FL("attempt", "--issue", "I4", "--change", "w", "--params", "gap=0.6", "--verdicts", v1w)
+    rc, out4 = FL("show", "--issue", "I4", "--md")
+    case("fixloop: flags such as MARGIN_DROP shown as other changes", "wall.json MARGIN_DROP" in out4, out4)
+    rc, out = FL("show", "--md")
+    common = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=rv,
+                            capture_output=True, text=True).stdout.strip()
+    case("fixloop: ledger kept beside the session lock, markdown report",
+         os.path.isfile(os.path.join(common, "hvp-sessions", "F.fixlog.json")) and "| 1 | move A | gap=0.4 |" in out, out)
+    st = subprocess.run(["git", "status", "--porcelain"], cwd=rv, capture_output=True, text=True).stdout.strip()
+    case("fix tools leave the target repository unchanged", st == "", st)
+    return base_rev
+
+
 def main():
     root = tempfile.mkdtemp(prefix="hvp-selftest-")
     repo = os.path.join(root, "repo")
@@ -213,6 +383,8 @@ def main():
          and "inputs copied: data/in.json" in out, out)
     wts = subprocess.run(["git", "worktree", "list"], cwd=repo, capture_output=True, text=True).stdout.strip().splitlines()
     case("determinism: temporary worktrees removed", len(wts) == 1, "\n".join(wts))
+
+    fix_cases(root)
 
     n_ok = sum(ok for _, ok in RESULTS)
     print("\nSELFTEST %d/%d passed (%s)" % (n_ok, len(RESULTS), root))

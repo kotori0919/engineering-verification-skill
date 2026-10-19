@@ -252,3 +252,149 @@ def foreign_processes(root):
             continue
         out.append((pid, c, cmdline_of(pid)))
     return out, how
+
+# ---------------------------------------------------------------- verdict records
+#
+# Evidence convention (oracle-catalog 29):
+#   {"status": "PASS", "layer": "L2", "question": "assembly",
+#    "metrics": {"min_clearance_mm": {"value": 0.35, "limit": 0.2, "target": 0.5, "sense": "min"}}}
+# or several checks in one file under "checks" / "cases" / "results" / "gates":
+#   {"checks": [{"id": "gear_mesh", "status": "FAIL", "metrics": {...}}]}
+# sense "min": value must be >= limit (bigger is better); "max": value must be <= limit.
+
+RANK = {"FAIL": 0, "PASS_BY_MODEL_CHANGE": 1, "PASS_BELOW_TARGET": 2, "PASS": 3}
+LIST_KEYS = ("checks", "cases", "results", "gates")
+
+
+def metric_status(m):
+    """Status implied by one metric entry, or None if it cannot be judged."""
+    if not isinstance(m, dict) or not _num(m.get("value")) or not _num(m.get("limit")):
+        return None
+    v, lim, tgt = m["value"], m["limit"], m.get("target")
+    lo = m.get("sense", "min") != "max"
+    if (v < lim) if lo else (v > lim):
+        return "FAIL"
+    if _num(tgt) and ((v < tgt) if lo else (v > tgt)):
+        return "PASS_BELOW_TARGET"
+    return "PASS"
+
+
+def margin(m):
+    if not isinstance(m, dict) or not _num(m.get("value")) or not _num(m.get("limit")):
+        return None
+    return (m["value"] - m["limit"]) if m.get("sense", "min") != "max" else (m["limit"] - m["value"])
+
+
+def derived_status(metrics):
+    st = [metric_status(m) for m in (metrics or {}).values()]
+    st = [s for s in st if s]
+    if not st:
+        return None
+    return min(st, key=lambda s: RANK[s])
+
+
+def _record(d):
+    metrics = d.get("metrics") if isinstance(d.get("metrics"), dict) else {}
+    status = d.get("status") if isinstance(d.get("status"), str) else None
+    return {"status": status, "metrics": metrics, "layer": d.get("layer"), "question": d.get("question")}
+
+
+def verdict_records(doc, path):
+    """{check_id: record} for one evidence document. Files without status/metrics give {}."""
+    out = {}
+    if not isinstance(doc, dict):
+        return out
+    if isinstance(doc.get("status"), str) or isinstance(doc.get("metrics"), dict):
+        out[path] = _record(doc)
+    for lk in LIST_KEYS:
+        items = doc.get(lk)
+        if not isinstance(items, list):
+            continue
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            cid = it.get("id", it.get("name"))
+            if cid is None or not (isinstance(it.get("status"), str) or isinstance(it.get("metrics"), dict)):
+                continue
+            r = _record(it)
+            if r["layer"] is None:
+                r["layer"] = doc.get("layer")
+            out["%s#%s" % (path, cid)] = r
+    return out
+
+
+def effective_status(rec):
+    s = rec.get("status")
+    return s if s else derived_status(rec.get("metrics"))
+
+
+def json_files(spec, top, pattern=""):
+    """{path: doc} for *.json in the worktree ('worktree'), at a revision ('git:<rev>'), or under a
+    directory snapshot ('dir:<path>', paths relative to it, ignored files included)."""
+    import fnmatch
+    docs = {}
+    if spec.startswith("dir:"):
+        base = os.path.abspath(spec[4:])
+        for r, ds, fs in os.walk(base):
+            ds[:] = sorted(d for d in ds if not d.startswith("."))
+            for fn in sorted(fs):
+                if not fn.endswith(".json"):
+                    continue
+                rel = os.path.relpath(os.path.join(r, fn), base)
+                if pattern and not fnmatch.fnmatch(rel, pattern):
+                    continue
+                try:
+                    with open(os.path.join(r, fn)) as fh:
+                        docs[rel] = json.load(fh)
+                except Exception:
+                    continue
+        return docs
+    if spec in ("", "worktree"):
+        names = [f for f in git("ls-files", "-co", "--exclude-standard", "*.json", cwd=top).split("\n") if f]
+        for f in names:
+            if pattern and not fnmatch.fnmatch(f, pattern):
+                continue
+            try:
+                with open(os.path.join(top, f)) as fh:
+                    docs[f] = json.load(fh)
+            except Exception:
+                continue
+        return docs
+    if not spec.startswith("git:"):
+        raise SystemExit("spec must be 'worktree', 'git:<rev>' or 'dir:<path>': %s" % spec)
+    rev = spec[4:]
+    names = [f for f in git("ls-tree", "-r", "--name-only", rev, cwd=top).split("\n") if f.endswith(".json")]
+    for f in names:
+        if pattern and not fnmatch.fnmatch(f, pattern):
+            continue
+        try:
+            docs[f] = json.loads(git("show", "%s:%s" % (rev, f), cwd=top))
+        except Exception:
+            continue
+    return docs
+
+# ---------------------------------------------------------------- candidate worktrees
+
+
+def candidate_worktree(top, base_dir, name, commit="HEAD", with_changes=True, inputs=()):
+    """Detached worktree at commit, plus (optionally) the uncommitted tracked changes of `top`
+    and copies of listed untracked inputs. Returns its path. Caller removes it."""
+    import shutil
+    wt = os.path.join(base_dir, name)
+    git("worktree", "add", "-q", "--detach", wt, git("rev-parse", commit, cwd=top), cwd=top)
+    if with_changes:
+        patch = git("diff", "--binary", "HEAD", cwd=top, text=False)
+        if patch.strip():
+            p = subprocess.run(["git", "apply", "--whitespace=nowarn", "-"], cwd=wt, input=patch,
+                               capture_output=True)
+            if p.returncode != 0:
+                git("worktree", "remove", "--force", wt, cwd=top, check=False)
+                raise SystemExit("could not apply working changes: %s" % p.stderr.decode(errors="replace"))
+        # new files the candidate added (untracked, not ignored) travel with it
+        inputs = list(inputs) + [f for f in git("ls-files", "-o", "--exclude-standard", cwd=top).split("\n")
+                                 if f and f not in inputs]
+    for p in inputs:
+        src, dst = os.path.join(top, p), os.path.join(wt, p)
+        os.makedirs(os.path.dirname(dst) or wt, exist_ok=True)
+        (shutil.copytree if os.path.isdir(src) else shutil.copy2)(src, dst)
+    return wt
