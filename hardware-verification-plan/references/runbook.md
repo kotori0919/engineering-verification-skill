@@ -1,106 +1,66 @@
 # 실행 런북
 
-SKILL.md 1·6·7·8단계에서 쓰는 명령과 도구별 실행 패턴. 저장소에 같은 일을 하는 스크립트가 있으면 그것을 쓴다. 아래 명령은 셸에 바로 붙여 쓰는 짧은 형태이고 저장소에 새 파일을 만들지 않는다. 경로, 파일 이름, glob은 모두 예시이며 저장소에 맞게 바꾼다. 명령은 bash 기준이며 Linux와 macOS에서 같이 돈다.
+SKILL.md 1·6·7·8·9단계의 실행 절차. 반복되는 점검은 `scripts/`의 도구로 하고, 이 문서는 언제 어떤 도구를 어떻게 쓰고 결과를 어떻게 읽는지 정한다. 저장소에 같은 일을 하는 스크립트가 있으면 그것을 쓴다. 도구는 대상 저장소에 파일을 만들지 않는다(세션 잠금은 `.git` 안, 임시 worktree는 시스템 임시 디렉터리).
 
 ## 목차
 
-0. 공통 머리줄
-1. 세션 잠금 파일과 격리
+0. 도구 목록과 자체 시험
+1. 세션 잠금과 격리
 2. 오라클 실행표와 도구별 패턴
 3. 결정론 이중 실행
 4. 낡은 증거 전수 검색과 의미 비교
 5. 스테이지 직전 점검
 6. 커밋 스냅샷 검증
+7. 증거 무결성 규칙
+8. 제작 착수 준비 절차
 
 ---
 
-## 0. 공통 머리줄
+## 0. 도구 목록과 자체 시험
 
-에이전트 도구는 보통 명령마다 새 셸을 연다. 앞 명령에서 정한 변수는 다음 명령에 남지 않는다. 그래서 세션 변수는 잠금 파일에 적어 두고, 아래 블록을 쓸 때마다 이 머리줄을 먼저 붙인다.
+필요한 것은 `python3`(3.8 이상)와 `git`(2.31 이상)뿐이다. Linux와 macOS에서 같이 돈다. 모든 도구는 대상 저장소(또는 그 worktree) 안에서 실행한다. 아래에서 `$S`는 이 skill의 `scripts` 디렉터리 절대 경로다.
 
-```sh
-SID=<session-id>                                   # 예: agent-20261019-1830. 세션 동안 같은 값
-L=$(git rev-parse --path-format=absolute --git-common-dir)/hvp-sessions; LOCK=$L/$SID.json
-lk() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get(sys.argv[2],""))' "$LOCK" "$1"; }   # lk worktree, lk start_head
-```
+| 도구 | 하는 일 | 종료 코드 |
+| --- | --- | --- |
+| `hvp_session.py` | 세션 잠금 등록, 동시 세션 신호, worktree 격리, touched 기록, 종료 | 0 정상, 1 거부, 2 동시 세션 |
+| `hvp_determinism.py` | 같은 커밋을 시드·순서 축만 바꿔 실행하고 결과 비교 | 0 일치, 1 불일치·실행 실패 |
+| `hvp_stale.py` | 기록된 입력 해시 대 현재 해시 전수 검색, 재생성 순서, 파일별 역참조 | 0 없음, 1 STALE·MISSING |
+| `hvp_compare.py` | 증거 JSON 두 개의 의미 비교 | 0 EQUIVALENT, 1 DIFFERENT |
+| `hvp_stagecheck.py` | 커밋 직전 스테이지 점검 | 0 CLEAN, 1 해결 필요 |
+| `hvp_snapshot.py` | 인덱스 그대로의 스냅샷에서 스위트 실행 | 스위트 종료 코드 |
+| `selftest.py` | 위 도구들의 known-answer 자체 시험(임시 저장소에서) | 0 전부 통과 |
 
-`--git-common-dir`는 연결된 worktree 안에서도 같은 경로를 돌려준다. 그래서 어느 worktree에서 실행해도 같은 잠금 파일을 본다.
-
-## 1. 세션 잠금 파일과 격리
-
-잠금은 `<git-common-dir>/hvp-sessions/`에 둔다. 커밋되지 않고 모든 worktree가 함께 본다.
-
-**시작할 때: 다른 잠금 확인 후 등록**
+**처음 쓰는 환경에서는 자체 시험부터 돌린다.** 검사기를 믿기 전에 정답을 아는 입력으로 확인한다는 skill의 원칙을 도구 자신에게도 적용한다.
 
 ```sh
-# (0절 머리줄)
-mkdir -p "$L"; NOW=$(date +%s)
-for f in "$L"/*.json; do [ -e "$f" ] || continue; [ "$f" = "$LOCK" ] && continue
-  python3 -c 'import json,sys,time;d=json.load(open(sys.argv[1]));age=int(time.time())-d.get("heartbeat",0);print(("ACTIVE " if age<7200 else "STALE  ")+d["session"],"age=%ds"%age,d.get("worktree",""))' "$f"
-done
-cat > "$LOCK" <<E
-{"session":"$SID","host":"$(hostname)","main_worktree":"$(git rev-parse --show-toplevel)",
- "worktree":"$(git rev-parse --show-toplevel)","branch":"$(git symbolic-ref -q --short HEAD)",
- "start_head":"$(git rev-parse HEAD)","started":$NOW,"heartbeat":$NOW,"touched":[]}
-E
+python3 $S/selftest.py            # SELFTEST n/n passed 가 나와야 한다. -v 로 상세 출력
 ```
 
-- **동시 세션 판정**: 다른 잠금 중 `ACTIVE`(heartbeat 2시간 이내)가 하나라도 있으면 동시 세션이다. 호스트나 PID로 판정하지 않는다. 에이전트의 셸은 명령마다 바뀌어 PID가 세션 수명을 나타내지 못한다.
-- **heartbeat 갱신**: 단계를 바꿀 때마다, 그리고 `touched`를 갱신할 때 함께 갱신한다(아래 명령).
-- `STALE` 잠금은 지우지 말고 보고한다. 끝난 세션이 정리를 못 한 것인지 사용자가 판단한다.
+자체 시험이 확인하는 것: 물리량 키(`bolt_head_diameter_mm`, `fault_duration_s`)를 휘발성으로 오인하지 않음, 휘발성만 바뀐 증거는 EQUIVALENT, 두 기록 형식의 STALE 검출과 재생성 순서, 동시 세션 잠금·외부 프로세스 검출과 자기 명령 제외, worktree 안에서의 세션 종료, 남의 파일·대용량·원시 산출물 검출, 연결된 worktree에서의 훅 탐색, 미추적 입력 때문에 작업 트리와 스냅샷 결과가 갈리는 경우, 두 시드 일치를 결정론으로 오인하지 않음.
 
-**잠금이 없어도 아래 신호가 있으면 동시 세션으로 본다**
+에이전트 도구는 보통 명령마다 새 셸을 연다. 앞 명령에서 정한 변수는 남지 않는다. 세션 값(worktree 경로, 시작 HEAD)은 잠금 파일에 있으니 `hvp_session.py get`으로 다시 읽는다.
+
+## 1. 세션 잠금과 격리
+
+잠금은 `<git-common-dir>/hvp-sessions/<SID>.json`에 둔다. 커밋되지 않고 모든 worktree가 함께 본다. `SID`는 세션 동안 같은 값으로 정한다(예: `agent-20261019-1830`).
 
 ```sh
-# (0절 머리줄)
-git log --format='%h %an %ar %s' "$(lk start_head)"..HEAD               # [a] 작업 시작 뒤 들어온 커밋
-find . -path ./.git -prune -o -type f -newermt '-30 minutes' -print | head   # [b] 최근 수정 파일(자기 touched와 대조)
-ROOT=$(pwd -P); SKIP=" $$ "; p=$$                                       # [c] 이 디렉터리를 cwd로 쓰는 다른 프로세스
-while [ "${p:-1}" -gt 1 ]; do p=$(ps -o ppid= -p "$p" | tr -d ' '); SKIP="$SKIP${p:-1} "; done
-lsof -a -d cwd -F pn 2>/dev/null | awk -v r="$ROOT" '/^p/{pid=substr($0,2)} /^n/{d=substr($0,2); if (d==r || index(d, r"/")==1) print pid}' |
-while read -r pid; do
-  case "$SKIP" in *" $pid "*) continue;; esac
-  pp=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
-  [ "$pp" = "$$" ] && continue
-  [ "${pp:-1}" != 1 ] && case "$SKIP" in *" $pp "*) continue;; esac
-  ps -o pid=,etime=,command= -p "$pid" 2>/dev/null
-done
+python3 $S/hvp_session.py start   --sid $SID          # 등록. 다른 잠금을 ACTIVE/STALE로 나열. ACTIVE가 있으면 exit 2
+python3 $S/hvp_session.py signals --sid $SID          # 잠금, 시작 뒤 커밋, 최근 수정 파일, 외부 프로세스. 동시면 exit 2
+python3 $S/hvp_session.py isolate --sid $SID --commit <pinned-commit>   # 전용 worktree + 브랜치 hvp/$SID, 경로 출력
+cd "$(python3 $S/hvp_session.py get --sid $SID worktree)"               # 이후 모든 실행·수정은 여기서
+python3 $S/hvp_session.py touch   --sid $SID <바꾼 경로...>              # 파일을 바꿀 때마다. heartbeat도 갱신
+python3 $S/hvp_session.py end     --sid $SID          # 깨끗한 worktree만 제거하고 잠금 삭제. 변경이 남으면 거부(exit 1)
 ```
 
-- [c]는 이 명령을 돌린 셸과 그 조상, 그 자식(lsof·awk 자신), 같은 조상 아래의 형제(`| head` 같은 파이프 상대)를 뺀다. PID 1의 자식은 빼지 않는다. 분리 실행된 다른 세션은 PID 1 아래로 옮겨지기 때문이다. 출력이 비어 있으면 다른 프로세스가 없다.
-- [b]의 파일이 모두 자기 `touched`에 있으면 신호가 아니다.
-
-**동시 세션이면 격리한다(의무)**
-
-```sh
-# (0절 머리줄)
-BASE=$(lk main_worktree); WT=$(dirname "$BASE")/$(basename "$BASE")-$SID
-git -C "$BASE" worktree add -b "hvp/$SID" "$WT" <pinned-commit>
-python3 -c 'import json,sys,time;p=sys.argv[1];d=json.load(open(p));d.update(worktree=sys.argv[2],branch="hvp/"+d["session"],start_head=sys.argv[3],heartbeat=int(time.time()));json.dump(d,open(p,"w"))' "$LOCK" "$WT" "$(git -C "$WT" rev-parse HEAD)"
-```
-
-이후 모든 실행·수정은 `cd "$(lk worktree)"` 뒤에 한다. worktree 경로는 잠금 파일에만 있으니 매번 `lk worktree`로 읽는다.
-
-**파일을 바꿀 때마다 `touched`에 추가하고 heartbeat 갱신**(5절 점검의 기준이 된다)
-
-```sh
-# (0절 머리줄)
-python3 -c 'import json,sys,time;p=sys.argv[1];d=json.load(open(p));d["touched"]=sorted(set(d["touched"])|set(sys.argv[2:]));d["heartbeat"]=int(time.time());json.dump(d,open(p,"w"))' "$LOCK" path/a.py path/b.json
-```
-
-경로는 worktree 루트 기준 상대 경로로 적는다.
-
-**끝낼 때**(통합은 사용자가 정한 방식으로 먼저 한다)
-
-```sh
-# (0절 머리줄)
-BASE=$(lk main_worktree); WT=$(lk worktree); cd "$BASE"
-[ "$WT" != "$BASE" ] && git -C "$WT" status --porcelain | head    # 비어 있어야 한다
-if [ "$WT" = "$BASE" ] || git worktree remove "$WT"; then rm -f "$LOCK"; echo "세션 종료"
-else echo "worktree에 변경이 남아 잠금을 유지한다: $WT (멈추고 보고)"; fi
-```
-
-`git worktree remove`는 미커밋 변경이 있으면 거부한다. `--force`를 쓰지 않고, 그때는 잠금도 지우지 않는다. 그래야 남은 worktree가 다른 세션에 보인다.
+- **동시 세션 판정**: 다른 잠금의 heartbeat가 2시간 안이면 ACTIVE다. PID로 판정하지 않는다. 에이전트의 셸은 명령마다 바뀌어 PID가 세션 수명을 나타내지 못한다.
+- **signals 읽기**:
+  - [a] 시작 HEAD 뒤에 들어온 커밋이 있으면 동시 세션이다.
+  - [b] 최근 수정 파일 중 자기 touched에 없는 것은 참고 신호다. 자기 편집을 touched에 안 적었을 수 있으니 확인한다.
+  - [c] 이 worktree를 작업 디렉터리로 쓰는 다른 프로세스. 도구 자신, 그 조상, 자식, 같은 셸 아래 파이프 상대(`| head`)는 뺀다. 같은 에이전트의 백그라운드 작업은 보고되니 명령줄을 보고 판단한다. 분리 실행된 다른 세션은 PID 1 아래로 옮겨져도 잡힌다. `/proc`이 없으면 `lsof`를 쓰고, 둘 다 없으면 "unavailable"로 표시한다.
+- **동시 세션이면 격리가 의무다**: `isolate` 뒤에만 실행·수정한다. 저장소 규칙이 worktree나 브랜치 생성을 막으면 진행하지 않고 사용자에게 격리 방법을 묻는다.
+- **동시 세션이 없으면**: 현재 체크아웃을 쓴다. 시작 HEAD는 잠금에 기록돼 있다. 실행 뒤 HEAD가 바뀌었으면 그 결과는 "실행 중 입력 변경"으로 표시하고 판정에 쓰지 않는다.
+- **종료**: 통합(병합, PR, 브랜치 정리)은 사용자가 정한 방식으로 먼저 한다. `end`는 `--force`를 쓰지 않는다. 변경이 남은 worktree와 그 잠금은 그대로 두어 다른 세션에 보이게 한다. STALE 잠금은 지우지 말고 보고한다.
 
 ## 2. 오라클 실행표와 도구별 패턴
 
@@ -128,7 +88,6 @@ else echo "worktree에 변경이 남아 잠금을 유지한다: $WT (멈추고 �
 - 드라이버는 세션별 경로에 둔다. 고정 경로(`/tmp/drv.py`)는 동시 세션끼리 덮어쓴다.
 
 ```sh
-# (0절 머리줄)
 DRV=${TMPDIR:-/tmp}/hvp-drv-$SID.py
 cat > "$DRV" <<'E'
 import runpy, sys, os, traceback
@@ -154,187 +113,100 @@ T=$PWD/<tests>/test_<name>.py timeout 900 freecadcmd -c "exec(open('$DRV').read(
 
 ## 3. 결정론 이중 실행
 
-같은 커밋을 해시 시드 여러 개로 돌리고 의미 필드를 비교한다. 정본 경로를 덮어쓰지 않도록 각 실행을 별도 worktree에서 한다.
-
-**미추적 입력**: 깨끗한 worktree에는 미추적·무시 파일(빌드된 CAD, 내려받은 데이터, 로컬 설정)이 없다. 검사가 그런 파일을 읽으면 worktree 실행이 실패하거나 다른 결과를 낸다. 검사가 읽는 미추적 입력을 `INPUTS`에 적어 복사하고, 그 목록을 실행 기록에 남긴다. 목록을 모르면 먼저 빈 목록으로 한 번 돌려 "파일 없음" 오류에서 찾는다.
-
 ```sh
-SRC=$(git rev-parse --show-toplevel); C=$(git rev-parse HEAD)
-OUT=<results>/<oracle>.json; CMD="python3 <tools>/<oracle>.py"
-INPUTS=""                               # 예: "cad/build/part.step data/raw/table.csv" (SRC 기준 상대 경로)
-SEEDS="1 7 42 1234"                     # 싼 검사는 4개 이상, 비싼 검사는 최소 2개
-R=$(mktemp -d)
-for s in $SEEDS; do
-  D=$R/wt-$s; git worktree add -q --detach "$D" "$C"
-  [ -n "$INPUTS" ] && (cd "$SRC" && tar cf - $INPUTS) | (cd "$D" && tar xf -)
-  (cd "$D" && PYTHONHASHSEED=$s timeout 1800 $CMD) > "$R/seed-$s.log" 2>&1; echo "seed $s exit $?"
-  cp "$D/$OUT" "$R/seed-$s.json" 2>/dev/null || echo "seed $s: $OUT 없음 (로그: $R/seed-$s.log)"
-  git worktree remove --force "$D"
-done
-echo "결과 디렉터리: $R"; echo "복사한 미추적 입력: ${INPUTS:-없음}"
+python3 $S/hvp_determinism.py --cmd "python3 <tools>/<oracle>.py" --out <results>/<oracle>.json \
+    --seeds 1,7,42,1234 [--inputs <미추적 입력...>] [--grep <tools>] [--keep]
 ```
 
-`--force`는 이 임시 worktree에만 쓴다. 비교는 4절의 의미 비교 명령으로, 첫 시드 결과와 나머지 각각을 비교한다(`A=$R/seed-1.json B=$R/seed-<s>.json`).
-
-- **일치는 결정론의 증명이 아니다**: 원소가 적은 set은 서로 다른 두 시드에서 같은 순서가 나올 수 있다. 예를 들어 5원소 문자열 set `{alpha, beta, gamma, delta, eps}`의 첫 원소는 CPython에서 시드 1과 7이 같고 42에서 다를 수 있다. 그래서 싼 검사는 시드를 4개 이상 쓴다. 비싼 검사는 2개로 돌리되, 결과를 "시드 n개 일치"로 기록하고 "결정론 확인"이라고 쓰지 않는다.
-- **코드 확인 병행**: 판정 경로에서 set·dict 순회 결과로 대표 항목·첫 항목·동률 승자를 고르는 코드를 grep으로 찾아 정렬로 바꾼다(`grep -nE 'next\(iter\(|\bset\(|frozenset|listdir|glob\(' <tools>`). 이중 실행이 일치해도 이런 코드가 판정 경로에 있으면 고친다.
-- **흔한 원인**:
-  - `set`·`frozenset` 순회 뒤 `next(iter(...))`
-  - set에서 만든 dict의 첫 항목 선택
-  - 동률 정렬에서 키가 부족함
-  - `os.listdir`·`glob` 결과를 정렬하지 않음
-- 고친 뒤에는 known-answer 픽스처와 이 이중 실행을 다시 통과시킨다.
-- 시드에 무관한 비결정성(스레드, GPU, 난수)은 그 축을 바꿔 같은 방식으로 본다(`OMP_NUM_THREADS=1` 대 기본값, 난수 seed 두 개).
+- 각 값마다 임시 worktree를 만들어 같은 커밋을 돌리고, 첫 값의 결과와 나머지를 의미 비교한다. 정본 증거는 건드리지 않는다.
+- **시드 개수**: 싼 검사는 4개 이상, 비싼 검사는 최소 2개. 원소가 적은 set은 서로 다른 두 시드에서 같은 순서가 나올 수 있다(예: 5원소 문자열 set의 첫 원소가 시드 1과 7에서 같고 42에서 다를 수 있다). 그래서 결과는 "n values agree"로 나오고, 문서에도 "시드 n개 일치"로 적는다. "결정론 확인"이라고 쓰지 않는다.
+- **다른 축**: `--axis OMP_NUM_THREADS --seeds 1,8`, 또는 검사기가 읽는 난수 seed 환경 변수 이름을 `--axis`로 준다.
+- **미추적 입력**: 깨끗한 worktree에는 미추적·무시 파일(빌드된 CAD, 내려받은 데이터, 로컬 설정)이 없다. 검사가 그런 파일을 읽으면 실행이 실패(RUN_FAILED)하거나, 더 나쁘게는 입력 없이 조용히 다른 결과를 낸다. `--inputs`로 복사하고 그 목록을 실행 기록에 남긴다. 목록을 모르면 먼저 빈 목록으로 돌려 로그의 "파일 없음" 오류에서 찾는다.
+- **결과 읽기**:
+  - `RESULT DIFFERENT`: 검사기 버그. 정렬된 순회로 고치고 known-answer 픽스처와 이 실행을 다시 통과시킨다. 그 전까지 해당 판정은 BLOCKED다.
+  - `RESULT RUN_FAILED`: 일치 여부를 말할 수 없다. 로그부터 본다.
+- **코드 확인(`--grep`)**: 판정 경로에서 set·dict 순회 결과로 대표 항목·첫 항목·동률 승자를 고르는 코드 후보를 나열한다. 일치해도 이런 코드가 판정 경로에 있으면 고친다. 흔한 원인은 `next(iter(set))`, set에서 만든 dict의 첫 항목, 키가 부족한 동률 정렬, 정렬하지 않은 `listdir`·`glob` 결과다.
+- 너무 오래 걸리는 검사는 축소 입력으로 돌리고 그 사실을 적는다.
 
 ## 4. 낡은 증거 전수 검색과 의미 비교
 
-**바뀐 파일을 기록한 증거 찾기**(수정 전 해시 고정 확인과 수정 후 전수 검색에 같이 쓴다)
-
 ```sh
-F=<바뀐 소스 경로>
-sha() { if command -v sha256sum >/dev/null; then sha256sum | cut -c1-64; else shasum -a 256 | cut -c1-64; fi; }
-OLD=$(git show HEAD:"$F" | sha); NEW=$(sha < "$F")
-git grep -l -e "$OLD" -e "$F" -- '*.json'          # HEAD 해시 또는 경로를 기록한 증거
+python3 $S/hvp_stale.py --file <바뀐 소스>      # 수정 전: 이 파일을 기록한 증거(경로 또는 HEAD 해시)
+python3 $S/hvp_stale.py                         # 수정 후: 전수 검색. STALE/MISSING 목록과 재생성 ORDER
+python3 $S/hvp_compare.py git:HEAD:<results>/x.json <results>/x.json   # 재생성 전후 의미 비교
 ```
 
-**모든 증거의 기록 해시 대 현재 해시 대조**(저장소 루트에서 실행. 경로를 키로, sha256을 값으로 기록하는 형식과 `path`/`sha256` 쌍 형식을 본다. 저장소 형식이 다르면 키 이름을 바꾼다)
+**전수 검색과 재생성**
 
-```sh
-python3 - <<'E'
-import hashlib, json, os, re, subprocess
-H = re.compile(r"^[0-9a-f]{64}$"); cache = {}
-def sha(p):
-    if p not in cache: cache[p] = hashlib.sha256(open(p, "rb").read()).hexdigest()
-    return cache[p]
-def is_path(s): return isinstance(s, str) and ("/" in s or "." in s) and len(s) < 1024
-def pairs(n):
-    if isinstance(n, dict):
-        for k, v in n.items():
-            if isinstance(v, str) and H.match(v) and is_path(k): yield k, v
-            if isinstance(v, dict) and isinstance(v.get("sha256"), str) and is_path(k): yield k, v["sha256"]
-        for pk in [k for k in n if k == "path" or k.endswith("_path")]:
-            hk = "sha256" if pk == "path" else pk[:-5] + "_sha256"
-            if is_path(n.get(pk)) and isinstance(n.get(hk), str): yield n[pk], n[hk]
-        for v in n.values(): yield from pairs(v)
-    elif isinstance(n, list):
-        for v in n: yield from pairs(v)
-files = subprocess.run(["git", "ls-files", "-co", "--exclude-standard", "*.json"], capture_output=True, text=True).stdout.split()
-for ev in files:
-    try: d = json.load(open(ev))
-    except Exception: continue
-    for p, h in pairs(d):
-        if not os.path.isfile(p): print("MISSING", ev, "->", p)
-        elif sha(p) != h: print("STALE  ", ev, "->", p)
-E
-```
+- 인식하는 기록 형식은 네 가지다: `{"<path>": "<sha256>"}`, `{"<path>": {"sha256": ...}}`, `{"path": ..., "sha256": ...}`, `{"x_path": ..., "x_sha256": ...}`. 키 이름이 다르면 `--path-key`, `--hash-key`로 바꾼다.
+- ORDER 순서대로 재생성한다. 다른 증거를 입력으로 기록한 증거는 그 증거 뒤에 온다.
+- 재생성 뒤 STALE 0이 될 때까지 다시 돌린다. 증거가 증거를 기록하면 한 번에 다 잡히지 않는다.
+- MISSING은 증거가 저장소 루트가 아닌 다른 기준으로 경로를 적었거나 실제로 파일이 없는 경우다. 확인한 뒤 보고한다.
+- 해시를 기록하지 않는 의존(파일 이름만 읽는 생성기)은 이 검색에 보이지 않는다. 저장소의 manifest나 gate가 담당하는지 확인한다.
 
-- **재생성 순서**: 출력된 증거 중 다른 증거 파일을 입력으로 기록한 것은 그 증거 뒤에 재생성한다.
-- **재검색**: 재생성 뒤 같은 검색을 다시 돌려 STALE 0을 확인한다. 증거가 증거를 기록하면 한 번에 다 잡히지 않는다.
-- **MISSING**: 증거가 저장소 루트가 아닌 다른 기준(절대 경로, 증거 파일 기준 상대 경로)으로 경로를 적었을 수 있다. 실제로 없는 파일인지 확인한 뒤 보고한다.
-- **찾지 못하는 것**: 이 검색은 해시를 기록하지 않는 의존(파일 이름만 읽는 생성기)을 찾지 못한다. 그런 의존은 저장소의 manifest나 gate가 담당하는지 확인한다.
+**의미 비교 규칙**
 
-**재생성 전후 의미 비교**
-
-무시하는 필드는 **키 이름이 정확히 일치할 때만** 뺀다. 이름 일부(예: `head`, `duration`)로 빼면 `bolt_head_diameter_mm`, `fault_duration_s` 같은 물리량 변화를 놓친다. 무시한 키와 해시 모양 값의 차이는 따로 출력해 사람이 확인할 수 있게 한다.
-
-```sh
-cp <results>/x.json /tmp/x.before.json    # 재생성 전에 복사
-A=/tmp/x.before.json B=<results>/x.json python3 - <<'E'
-import json, math, os, re
-# 휘발성 키: 마지막 경로 성분이 정확히 이 이름이거나 이 접미사로 끝날 때만 뺀다. 저장소에 맞게 IGNORE_KEYS로 추가한다.
-# ID_NAMES는 값이 해시 모양(40–64자리 16진수)일 때만 뺀다. "head"가 볼트 머리 형식 같은 실제 값일 수 있기 때문이다.
-ID_NAMES = {"sha256", "hash", "digest", "commit", "design_commit", "git_commit", "head", "head_commit"}
-NAMES = {"timestamp", "generated_at", "created_at", "started_at", "finished_at", "elapsed", "elapsed_s",
-         "wall_time_s", "runtime_s", "hostname", "host", "tmpdir", "tmp_dir", "cwd", "pid"}
-NAMES |= {k for k in os.environ.get("IGNORE_KEYS", "").split(",") if k}
-SUFFIXES = ("_sha256", "_hash", "_digest")
-HEX = re.compile(r"^[0-9a-f]{40,64}$")
-def hexlike(v): return v is None or (isinstance(v, str) and bool(HEX.match(v)))
-def flat(x, p=""):
-    if isinstance(x, dict):
-        for k, v in x.items(): yield from flat(v, p + "/" + k)
-    elif isinstance(x, list):
-        for i, v in enumerate(x): yield from flat(v, "%s[%d]" % (p, i))
-    else: yield p, x
-def segs(p): return [re.sub(r"(\[\d+\])+$", "", s) for s in p.split("/") if s]
-def volatile(p, x, y):
-    s = segs(p)
-    if not s: return False
-    if "volatile" in s or s[-1] in NAMES: return True
-    return (s[-1] in ID_NAMES or s[-1].endswith(SUFFIXES)) and hexlike(x) and hexlike(y)
-def num(x): return isinstance(x, (int, float)) and not isinstance(x, bool)
-def same(x, y):
-    if num(x) and num(y): return math.isclose(x, y, rel_tol=1e-9, abs_tol=1e-12)
-    return x == y
-a, b = (dict(flat(json.load(open(os.environ[k])))) for k in "AB")
-keys = sorted(set(a) | set(b)); diff, hexd, ign = [], [], set()
-for k in keys:
-    x, y = a.get(k), b.get(k)
-    if volatile(k, x, y):
-        if not same(x, y): ign.add(segs(k)[-1])
-        continue
-    if same(x, y): continue
-    if isinstance(x, str) and isinstance(y, str) and HEX.match(x) and HEX.match(y): hexd.append(k)
-    else: diff.append(k)
-print("EQUIVALENT" if not diff else "DIFFERENT %d" % len(diff))
-for k in diff[:50]: print(" ", k, a.get(k), "->", b.get(k))
-print("무시한 휘발성 키(값이 바뀐 것):", ", ".join(sorted(ign)) or "없음")
-if hexd: print("해시 모양 값만 바뀐 필드 %d개(확인 필요):" % len(hexd), ", ".join(hexd[:10]))
-E
-```
-
-- 커밋된 버전과 비교하려면 `git show HEAD:<results>/x.json > /tmp/x.before.json`을 먼저 실행한다.
-- 결과가 EQUIVALENT면 "의미 변화 없음"으로 기록하되, "무시한 휘발성 키" 목록을 함께 적는다. 목록에 물리량이 보이면 `NAMES`가 너무 넓은 것이니 고친다.
-- DIFFERENT면 필드와 전후 값을 수정 보고에 옮긴다.
-- 0 근처 잔차(예: 1e-13 대 3e-13)는 절대 하한 덕분에 변화로 잡히지 않는다. 저장소나 오라클이 허용치를 정했으면 그 값을 쓴다.
+- 휘발성 키는 키 이름이 정확히 일치할 때만 뺀다(타임스탬프, `elapsed_s`, 호스트 이름, 임시 경로, `volatile` 아래 전부). 이름 일부로 빼면 `bolt_head_diameter_mm`, `fault_duration_s` 같은 물리량 변화를 놓친다.
+- `commit`, `head`, `sha256`, `*_sha256` 같은 ID 키는 두 값이 모두 해시 모양일 때만 뺀다. `head`가 실제 값(볼트 머리 형식)이면 비교한다.
+- 수치는 상대 1e-9, 절대 1e-12로 비교한다. 0 근처 잔차(1e-13 대 3e-13)는 변화로 읽지 않는다. 오라클이 허용치를 정했으면 `--rel`, `--abs`로 그 값을 쓴다.
+- 저장소 고유의 휘발성 키는 `--ignore-keys`로 더한다.
+- EQUIVALENT여도 출력의 "ignored volatile keys" 목록을 보고서에 함께 적는다. 목록에 물리량이 보이면 무시 목록이 잘못된 것이다. "hash-like values changed" 필드는 사람이 확인한다.
 
 ## 5. 스테이지 직전 점검
 
 ```sh
-# (0절 머리줄)
-cd "$(lk worktree)"
-OWN=$(mktemp); STG=$(mktemp)
-python3 -c 'import json,sys;print("\n".join(json.load(open(sys.argv[1]))["touched"]))' "$LOCK" | sort > "$OWN"
-git diff --cached --name-only | sort > "$STG"
-echo "[1] 남의 파일(내릴 것: git restore --staged -- <path>)"; comm -23 "$STG" "$OWN"
-echo "[1'] 자기 변경인데 스테이지 안 됨(의도 확인)";        comm -13 "$STG" "$OWN"
-echo "[2] 25 MB 초과"
-git diff --cached --name-only --diff-filter=d | while IFS= read -r f; do
-  s=$(git cat-file -s ":$f"); [ "$s" -gt 26214400 ] && echo "$s $f"; done; true
-echo "[3] 원시 산출물"
-git diff --cached --name-only --diff-filter=d | grep -E '(_raw/|/raw/|\.(vtu|vtk|frd|rmed|h5|npz|npy|log|skill)$)'; true
-echo "[4] 작업 시작 뒤 HEAD에 들어온 커밋(모두 자기 것이어야 함)"
-git log --format='%h %an %s' "$(lk start_head)"..HEAD
-echo "[5] HEAD 상태"; git symbolic-ref -q --short HEAD || echo "DETACHED: git switch <branch>"
+cd "$(python3 $S/hvp_session.py get --sid $SID worktree)"
+python3 $S/hvp_stagecheck.py --sid $SID [--max-mb 25]
 ```
 
-- 각 항목은 출력 줄로 판정한다. 종료 코드로 판정하지 않는다(`grep`은 일치가 없을 때 1을 낸다).
-- [1]·[2]·[3]이 비어 있고, [4]가 모두 자기 커밋이고, [5]가 브랜치 이름일 때만 커밋한다.
-- 원시 산출물 패턴은 `.gitignore`에 추가하고, 그 변경도 경로 지정으로 커밋한다.
+- [1] 남의 파일, [2] 크기 상한 초과, [3] 원시 해석 산출물(메시·결과 덤프·로그)이 비어 있고, [4]의 커밋이 모두 자기 것이고, [5]가 브랜치 이름일 때만(VERDICT CLEAN) 커밋한다.
+- [1]의 기준은 잠금의 touched 목록이다. 파일을 바꿀 때마다 `hvp_session.py touch`로 적는다.
+- 원시 산출물 패턴은 `.gitignore`에 추가하고, 그 변경도 경로 지정으로 커밋한다. 저장소 규칙이 다르면 `--raw-pattern`, `--max-mb`로 맞춘다.
 - 스테이지는 `git add -- <path> ...`로만 한다. `git add -A`나 `git add .`은 쓰지 않는다.
-- 파일 하나를 되돌릴 때는 `git restore --source=<rev> -- <path>`를 쓴다. 이미 HEAD가 분리됐다면 `git switch <branch>`로 돌아간다. 이때 추적 파일 충돌이 나면, 재생성 가능한 파일만 스크래치로 옮긴 뒤 돌아간다.
+- 파일 하나를 되돌릴 때는 `git restore --source=<rev> -- <path>`를 쓴다. 경로 없는 `git checkout <rev> --`는 HEAD를 분리시킨다. 이미 분리됐다면 `git switch <branch>`로 돌아가고, 추적 파일 충돌이 나면 재생성 가능한 파일만 스크래치로 옮긴 뒤 돌아간다.
 
 ## 6. 커밋 스냅샷 검증
 
-인덱스로 임시 커밋 객체를 만든다. ref는 움직이지 않는다. 그 커밋을 깨끗한 worktree에 풀고 pre-push 스위트를 돌린다.
-
 ```sh
-TOP=$(git rev-parse --show-toplevel)
-HP=$(git config core.hooksPath)                                 # 훅 위치: 설정값 → 상대면 저장소 루트 기준
-case "$HP" in "") HP=$(git rev-parse --path-format=absolute --git-path hooks);; /*) ;; *) HP="$TOP/$HP";; esac
-sed -n '1,80p' "$HP/pre-push"                                   # 훅이 실제로 돌리는 명령 확인
-T=$(git write-tree); C=$(git commit-tree "$T" -p HEAD -m snapshot-candidate)
-S=$(mktemp -d)/snap; git worktree add -q --detach "$S" "$C"
-(cd "$S" && <훅이 돌리는 명령 그대로, 같은 환경>); echo "exit $?"   # 예: nix develop -c <suite>, conda run -n <env> <suite>
-git worktree remove --force "$S"
+python3 $S/hvp_snapshot.py --show-hook                                 # 훅 위치와 본문: 훅이 실제로 돌리는 명령 확인
+python3 $S/hvp_snapshot.py --cmd "<훅이 돌리는 명령 그대로, 같은 환경>"     # 예: "nix develop -c <suite>"
 ```
 
-- 연결된 worktree에서는 `.git`이 디렉터리가 아니라 파일이라 `.git/hooks`를 직접 쓰면 실패한다. 위처럼 `--git-path hooks`로 찾는다.
-- 훅을 직접 부르려면 git이 넘기는 인자와 stdin을 맞춘다.
+- 인덱스로 임시 커밋 객체를 만들어 깨끗한 worktree에서 명령을 돌린다. ref는 움직이지 않는다. 미추적 파일 덕에 작업 트리에서만 통과하는 경우가 여기서 실패로 드러난다.
+- 훅 위치는 `core.hooksPath`를 먼저 보고, 없으면 `git rev-parse --git-path hooks`로 찾는다. 연결된 worktree에서는 `.git`이 파일이라 `.git/hooks`를 직접 쓰면 실패한다.
+- 훅 스크립트를 직접 부를 때는 git이 넘기는 인자와 stdin을 맞춘다. 스냅샷 안에서는 `$HVP_HOOKS_DIR`, `$HVP_SNAPSHOT_COMMIT`을 쓸 수 있다.
 
   ```sh
-  echo "refs/heads/<b> $C refs/heads/<b> $(git rev-parse origin/<b>)" | (cd "$S" && "$HP/pre-push" origin <url>)
+  python3 $S/hvp_snapshot.py --cmd 'echo "refs/heads/<b> $HVP_SNAPSHOT_COMMIT refs/heads/<b> $(git rev-parse origin/<b>)" | "$HVP_HOOKS_DIR/pre-push" origin <url>'
   ```
 
-- 여기서 실패하면 원인 유형(SKILL.md 6단계 분류)을 정하고 고친다. 그 뒤 인덱스를 다시 만들어 이 절을 반복한다. push는 여기서 통과한 다음에만 한다.
-- 커밋을 여러 개로 나눌 때는 묶음마다 같은 방식으로 확인한다. `git commit-tree`의 부모를 직전 묶음의 임시 커밋으로 주면 순서대로 확인할 수 있다.
+- 실패하면 원인 유형(SKILL.md 6단계 분류)을 정하고 고친다. 인덱스를 다시 만들고 반복한다. push는 여기서 통과한 다음에만 한다.
+- 커밋을 여러 묶음으로 나눌 때는 묶음마다 확인한다. 출력의 커밋 객체를 다음 묶음의 `--parent`로 주면 순서대로 확인할 수 있다.
+
+## 7. 증거 무결성 규칙
+
+판정이 어느 형상의 것인지 보증하기 위한 규칙이다(SKILL.md 8단계).
+
+1. **스테이지 직전 점검**: 5절. 스테이지된 목록이 자기 변경 목록과 같아야 하고, 크기 상한(기본 25 MB, 저장소 규칙 우선), 원시 산출물 혼입, 낯선 커밋, 분리된 HEAD가 없어야 한다.
+2. **되돌리기**: 파일 단위로 `git restore --source=<rev> -- <path>`. 경로 없는 checkout을 쓰지 않는다.
+3. **커밋 스냅샷 검증**: 6절. 작업 트리 PASS는 커밋 스냅샷 PASS가 아니다. 통과한 뒤에만 커밋·push한다.
+4. **우회 금지**: 훅 생략(`--no-verify`), 게이트 목록 축소, 기대값 수정으로 통과시키지 않는다.
+5. **검토하지 않은 변경**: 자기가 만들지 않았거나 검토하지 않은 변경의 커밋 여부를 사용자에게 물을 때는 묶음별 검토안(경로 묶음, 변경 내용, 해시 의존, 위험)을 먼저 내고, 선택지에 추천 표시를 붙이지 않는다.
+6. **원격 작업**: push, PR 생성·병합, 원격 삭제는 사용자의 명시적 승인이 있을 때만 한다.
+7. **제작 패키지가 HEAD에 묶일 때**: 패키지와 그 검증 결과는 추적하지 않는 출력 디렉터리에 두거나, 마지막 게이트가 자기 출력을 판정 입력에서 빼게 한다. 그렇지 않으면 검증 결과를 커밋할 때마다 패키지가 다시 낡는다.
+
+## 8. 제작 착수 준비 절차
+
+목표는 "사람이 재고를 세고 첫 부품을 만들고, 그 결과로 설계 판정을 확인할 수 있는 상태"다(SKILL.md 9단계). 양식은 templates.md 9a·9b·9c절.
+
+1. **부품별 세 질문 판정표(9a)**: BOM 각 행에 CAD 솔리드 유무, 타당성·조립·동작 판정과 그 근거 검사, 상태를 적는다. PASS_BELOW_TARGET과 PASS_BY_MODEL_CHANGE는 따로 표시한다.
+   - BOM 행, CAD 솔리드(이름·해시), 그 솔리드를 입력으로 쓴 검증 목록을 대조한다(oracle-catalog 28절). CAD 솔리드가 없는 부품이나 검증 대상에서 빠진 하위 시스템이 있으면 "제작 가능"이라고 쓰지 않는다. "모델 없음 N건, 검증 없음 M건"으로 쓴다.
+   - 미결 공칭–실측 불일치(7a)가 걸린 판정은 그 표에 함께 표시한다.
+2. **조립 순서와 공구 접근**: 분해 경로 탐색(oracle-catalog 23절)의 역순으로 조립 순서를 내고, 각 단계의 체결 공구 진입 경로와 필요한 지그를 적는다. 탐색이 다루지 못하는 부분(회전 삽입, 유연 부품)은 수동 확인 항목으로 둔다.
+3. **승인 구분**: 승인 없이 할 수 있는 작업(무가공 재고 조사, 치수 측정, 문서 작업)과 각각 승인이 필요한 작업(구매, 가공·절단, 통전, 회전체 시운전)을 나눈다.
+4. **L5 실측 패킷**: "물리 시험 NOT_RUN"으로 끝내지 않고 바로 쓸 수 있는 양식을 낸다.
+   - **초품 검사표(9b)**: CAD에서 기능 치수(맞춤, 축간, 베어링 자리, 체결 위치, 여유가 작은 간섭 쌍)를 골라 공칭, 공차, 게이지, 측정 방법을 적는다.
+   - **측정 기록 양식(9c)**: 항목, 게이지, 게이지 %GRR 전제, 측정값, 측정자, 시각, 기록 JSON 경로. %GRR을 모르는 게이지로 낸 판정은 "판정 불가"다.
+   - **기능 시험**: 의도 동작을 실물로 확인하는 최소 시험(손 구동 행정, 무부하 회전, 소재 투입)을 lockout 조건과 함께 적는다.
+   - **재판정 연결**: 측정 항목마다 그 값을 입력으로 쓰는 판정(간섭 쌍, 안전율, 열 계수)을 적고, 실측값이 들어오면 그 판정을 다시 돌린다. 저장소에 연결 장치가 없으면 재실행 명령 목록을 적는다. 실측값은 불일치 대장(7a)에도 들어간다.
+5. **제작 패키지**: 7절 7항.
