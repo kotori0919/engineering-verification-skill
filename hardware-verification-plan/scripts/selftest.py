@@ -219,6 +219,40 @@ def fix_cases(root):
          os.path.isfile(os.path.join(common, "hvp-sessions", "F.fixlog.json")) and "| 1 | move A | gap=0.4 |" in out, out)
     st = subprocess.run(["git", "status", "--porcelain"], cwd=rv, capture_output=True, text=True).stdout.strip()
     case("fix tools leave the target repository unchanged", st == "", st)
+
+    # ------------------------------------------------ red-green
+    rg = new_repo(root, "repo-redgreen")
+    os.makedirs(os.path.join(rg, "src"))
+    open(os.path.join(rg, "src/cam.py"), "w").write("GAP = 0.30\n")
+    sh("git add -A && git commit -qm base", rg)
+    open(os.path.join(rg, "src/cam.py"), "w").write("GAP = 0.65\n")            # the fix (uncommitted)
+    open(os.path.join(rg, "t_good.py"), "w").write(
+        "import sys; sys.path.insert(0,'src'); import cam\n"
+        "c = cam.GAP - 0.45\nassert c >= 0.15, 'min_clearance %.2f below target' % c\n")
+    open(os.path.join(rg, "t_weak.py"), "w").write(
+        "import sys; sys.path.insert(0,'src'); import cam\nassert cam.GAP > 0\n")
+    open(os.path.join(rg, "t_broken.py"), "w").write("import nonexistent_module\n")
+    rc, out = run(["hvp_redgreen.py", "--test", "python3 t_good.py", "--fix", "src/cam.py",
+                   "--expect", "min_clearance"], rg)
+    case("redgreen: a test that detects the defect -> RED_GREEN_OK", rc == 0 and "RESULT RED_GREEN_OK" in out, out)
+    rc, out = run(["hvp_redgreen.py", "--test", "python3 t_weak.py", "--fix", "src/cam.py"], rg)
+    case("redgreen: a test that passes without the fix -> TEST_DOES_NOT_DETECT",
+         rc == 1 and "TEST_DOES_NOT_DETECT" in out, out)
+    rc, out = run(["hvp_redgreen.py", "--test", "python3 t_good.py && python3 t_broken.py", "--fix", "src/cam.py"], rg)
+    case("redgreen: failing even with the fix -> GREEN_FAILS", rc == 1 and "GREEN_FAILS" in out, out)
+    open(os.path.join(rg, "t_other.py"), "w").write(
+        "import sys; sys.path.insert(0,'src'); import cam\n"
+        "if cam.GAP < 0.5: raise SystemExit('cannot open data/fixture.step')\n")
+    rc, out = run(["hvp_redgreen.py", "--test", "python3 t_other.py", "--fix", "src/cam.py",
+                   "--expect", "min_clearance"], rg)
+    case("redgreen: red for an unrelated reason -> RED_FOR_OTHER_REASON", rc == 1 and "RED_FOR_OTHER_REASON" in out, out)
+    sh("git add src/cam.py && git commit -qm fix", rg)
+    base = subprocess.run(["git", "rev-parse", "HEAD~1"], cwd=rg, capture_output=True, text=True).stdout.strip()
+    rc, out = run(["hvp_redgreen.py", "--test", "python3 t_good.py", "--fix", "src/cam.py", "--base", base], rg)
+    case("redgreen: committed fix checked against --base", rc == 0 and "RED_GREEN_OK" in out, out)
+    gl = subprocess.run(["git", "status", "--porcelain"], cwd=rg, capture_output=True, text=True).stdout
+    wts = subprocess.run(["git", "worktree", "list"], cwd=rg, capture_output=True, text=True).stdout.strip().splitlines()
+    case("redgreen: working tree and worktrees untouched", len(wts) == 1 and "src/cam.py" not in gl, gl + "\n".join(wts))
     return base_rev
 
 

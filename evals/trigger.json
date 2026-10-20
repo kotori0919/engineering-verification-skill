@@ -1,0 +1,82 @@
+[
+ {
+  "query": "내 기구 저장소(github에 있음) 읽고 캠·하우징 조립 간섭이랑 체결 안전성 검증 계획 세워 줘. 지금은 Fusion에서 눈으로 보고 있음",
+  "should_trigger": true
+ },
+ {
+  "query": "isaac sim에서 분쇄기 투입 시뮬레이션이 매번 결과가 달라. 이걸로 처리량 PASS 판정해도 되나? 검증 전략 좀",
+  "should_trigger": true
+ },
+ {
+  "query": "FreeCAD로 만든 브래킷 안전율이 1.2라는데 목표가 1.5야. 다른 검사 안 깨지게 고쳐 줘",
+  "should_trigger": true
+ },
+ {
+  "query": "3D 프린팅할 하우징 STEP이랑 BOM 있어. 시제품 바로 뽑을 수 있게 부품별로 뭐가 검증 안 됐는지 정리해",
+  "should_trigger": true
+ },
+ {
+  "query": "e2e 검증 돌렸더니 assembly gate에서 FAIL 3개. 원인 찾아서 고치고 커밋까지",
+  "should_trigger": true
+ },
+ {
+  "query": "mujoco 모델이랑 실제 링크 기구 자유도가 안 맞는 것 같아. 과구속인지 확인할 방법?",
+  "should_trigger": true
+ },
+ {
+  "query": "열 인서트 인발 강도 계산을 공칭 면적으로 했는데 실제 접촉 면적이 작대. 어떤 판정들 다시 봐야 해?",
+  "should_trigger": true
+ },
+ {
+  "query": "openmodelica 열 모델 결과를 실측 열전대 값이랑 맞추는 보정 절차 만들어 줘",
+  "should_trigger": true
+ },
+ {
+  "query": "지난번 검증 결과 json들 중에 소스 바뀌어서 낡은 거 다 찾아서 재생성해",
+  "should_trigger": true
+ },
+ {
+  "query": "공압 실린더로 미는 정렬 지그 설계했어. 행정 중에 다른 부품이랑 부딪히는지 확인하려면?",
+  "should_trigger": true
+ },
+ {
+  "query": "react 앱 playwright e2e 테스트가 CI에서만 깨져. 고쳐 줘",
+  "should_trigger": false
+ },
+ {
+  "query": "KiCad 회로도 그리는 법 알려 줘. 저항이랑 LED 하나짜리",
+  "should_trigger": false
+ },
+ {
+  "query": "Fusion 360에서 M3 볼트 구멍 있는 L자 브래킷 하나 모델링해 줘",
+  "should_trigger": false
+ },
+ {
+  "query": "이 python 함수 단위 테스트 몇 개 써 줘",
+  "should_trigger": false
+ },
+ {
+  "query": "PLA랑 PETG 중에 뭐가 더 질겨? 그냥 일반적인 비교",
+  "should_trigger": false
+ },
+ {
+  "query": "우리 서비스 배포 전 체크리스트 만들어 줘 (k8s, db 마이그레이션 있음)",
+  "should_trigger": false
+ },
+ {
+  "query": "SolidWorks 라이선스 가격이 얼마야",
+  "should_trigger": false
+ },
+ {
+  "query": "논문 리뷰용으로 FEM 메시 수렴 개념 쉽게 설명해 줘",
+  "should_trigger": false
+ },
+ {
+  "query": "Blender로 기계 부품 렌더링 예쁘게 하는 조명 세팅",
+  "should_trigger": false
+ },
+ {
+  "query": "아두이노 스텝모터 코드가 가끔 탈조해. 코드 봐 줘",
+  "should_trigger": false
+ }
+]

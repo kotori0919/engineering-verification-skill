@@ -2,7 +2,7 @@
 
 (skill 이름은 `hardware-verification-plan`이다. 설치 경로와 skill 이름은 그대로 쓴다.)
 
-실물 엔지니어링 프로젝트(CAD 기구, 조립체, 공정 기계, 3D 출력·가공 부품, 펌웨어·제어)를 AI 에이전트가 검증·테스트·수정할 수 있게 하는 Claude skill이다. 방법론 문서와 함께, 검증 절차와 검증 결과에 근거한 설계 수정 루프를 실제로 돌리는 도구 10종과 그 도구의 자체 시험을 담고 있다.
+실물 엔지니어링 프로젝트(CAD 기구, 조립체, 공정 기계, 3D 출력·가공 부품, 펌웨어·제어)를 AI 에이전트가 검증·테스트·수정할 수 있게 하는 Claude skill이다. 방법론 문서와 함께, 검증 절차와 검증 결과에 근거한 설계 수정 루프를 실제로 돌리는 도구 11종, 그 도구의 자체 시험, 에이전트 행동을 보는 평가 세트를 담고 있다.
 
 ## 무엇을 하는가
 
@@ -64,8 +64,11 @@ hardware-verification-plan/
     ├── hvp_sweep.py             후보 값마다 1차 오라클 실행, 하한·목표 도달 값과 단조성
     ├── hvp_verdicts.py          수정 전후 판정 비교(FIXED, REGRESSED, LOST, MARGIN_DROP, CRITERIA_CHANGED)
     ├── hvp_fixloop.py           이슈별 시도 기록, 예산·반복·결합·진동·정체 감지
+    ├── hvp_redgreen.py          회귀 시험이 수정을 되돌리면 실패하는지 확인
     ├── hvp_common.py            공용 함수
-    └── selftest.py              위 도구들의 known-answer 자체 시험(53건)
+    └── selftest.py              위 도구들의 known-answer 자체 시험(59건)
+
+evals/                           (skill 패키지 밖) 행동 시나리오 8개, 발동 평가 20문항, 모의 저장소 생성기
 ```
 
 도구는 Python 3.8 이상과 git 2.31 이상만 쓴다(표준 라이브러리). 대상 저장소에 파일을 만들지 않는다. 세션 잠금은 `.git` 안, 임시 worktree는 시스템 임시 디렉터리에 둔다.
@@ -91,7 +94,7 @@ zip -r hardware-verification-plan.skill hardware-verification-plan -x '*/__pycac
 설치한 환경에서 도구 자체가 맞게 동작하는지 먼저 확인한다. 검사기를 믿기 전에 정답을 아는 입력으로 시험한다는 skill의 원칙을 도구에도 적용한 것이다.
 
 ```sh
-python3 hardware-verification-plan/scripts/selftest.py      # SELFTEST 53/53 passed
+python3 hardware-verification-plan/scripts/selftest.py      # SELFTEST 59/59 passed
 ```
 
 ## 사용 예
@@ -146,13 +149,16 @@ python3 $S/hvp_fixloop.py show --sid agent-1 --issue I-1 --md           # 시도
 | v3.1 | runbook 명령 오류 8건 수정(의미 비교의 거짓 EQUIVALENT 등), 시험 저장소 재검증 |
 | v3.2 | 검증 도구 6종과 자체 시험 추가, SKILL.md 8·9단계를 runbook으로 이동 |
 | v4 | 검증 기반 수정 루프: 수정 대상 결정, 후보와 크기(스윕), 회귀 판정, 루프 제어, 수정 패턴 12종, 도구 4종 |
+| v5 | 주장–증거 표, red-green 회귀 시험 확인, 원인 규명 보강(통과 상태 비교·경계 계측), ERC·DRC 오라클, CAD 연동 도구 출력 처리, 시운전 중단 기준, 행동·발동 평가 세트 |
 
 자세한 내용은 [CHANGELOG.md](CHANGELOG.md).
 
 ## 검증 상태
 
-- `selftest.py` 53/53 통과: Linux, Python 3.13, git 2.43. 수정 루프 도구는 도구 결함 6종을 일부러 심어 시험이 그 결함을 잡는지 확인했고, 모의 저장소에서 runbook 9절 순서를 처음부터 끝까지 실행했다.
+- `selftest.py` 59/59 통과: Linux, Python 3.13, git 2.43. 수정 루프 도구는 도구 결함 6종을 일부러 심어 시험이 그 결함을 잡는지 확인했고, 모의 저장소에서 runbook 9절 순서를 처음부터 끝까지 실행했다.
 - 시험하지 못한 것: macOS의 `lsof` 경로, FreeCAD 헤드리스 드라이버, nix 환경과 실제 저장소의 pre-push 훅. 해당 환경에서 `selftest.py`를 먼저 돌린다.
+
+- 행동·발동 평가(`evals/`)는 세트만 있고 아직 실행하지 않았다. 실행 방법은 `evals/README.md`.
 
 ## 라이선스
 

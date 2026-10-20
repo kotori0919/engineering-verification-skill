@@ -2,6 +2,24 @@
 
 모든 날짜는 2026-10-19(KST). 각 버전은 같은 이름의 git 태그로 표시한다.
 
+## v5 — 공개 skill·플러그인 방법론 반영
+
+Anthropic skill-creator, obra/superpowers, Anthropic 공식 플러그인(code-review, hookify, security-guidance, engineering), 하드웨어 쪽 CAD·EDA 연동 사례를 검토하고 적용할 수 있는 것을 넣었다.
+
+- **주장–증거 표**(운영 규칙 뒤): 간섭 없음, 조립 가능, 강도 충분, 고쳤다, 제작 가능, VALIDATED 등 주장 12개마다 필요한 증거와 부족한 증거를 짝지었다. 추정 표현을 쓰려 할 때 다시 볼 기준도 넣었다(superpowers verification-before-completion).
+- **red-green 회귀 시험 확인**: `hvp_redgreen.py`를 추가했다. 수정이 있으면 통과하고, 수정 경로만 되돌리면 실패해야 한다. 다른 이유로 실패하는 경우를 `--expect`로 거른다. SKILL.md 7.9와 runbook 9.7에 반영했다(superpowers test-driven-development).
+- **원인 규명 보강**(7.2): 통과하던 마지막 커밋과의 차이 비교와 `git bisect`, 형상 경계(계약 → 빌더 → 내보낸 형상 → 검사기)마다 해시·치수 계측을 넣었다(superpowers systematic-debugging).
+- **CAD 연동 도구 출력 처리**(runbook 2절): MCP·GUI 연동의 성공 상태와 스크린샷은 판정 근거가 아니다. 형상을 내보내 해시를 남기고 헤드리스 1차 오라클로 판정한다. 연동 도구의 단발 FE 결과는 진단값으로 다룬다.
+- **ERC·DRC 오라클**(oracle-catalog 32절, SKILL.md 오라클 배정표): `kicad-cli` JSON 출력, 제외 목록 변경을 기준 변경으로 다루기, known-answer 픽스처.
+- **시운전 중단 기준**(runbook 8절, 템플릿 9b): 통전·회전 시험 전에 전류·온도·소음·걸림 기준과 멈추는 방법을 적는다(engineering deploy-checklist의 사전 롤백 기준).
+- **실측–판정 불일치 분석 양식**(템플릿 9d): 5 whys로 틀린 모델·입력·절차를 찾고 불일치 대장과 수정 루프로 넘긴다(engineering incident-response의 비난 없는 사후 분석).
+- **평가 세트**(`evals/`): 행동 시나리오 8개(압박 상황 포함)와 모의 저장소 생성기, 발동 평가 20문항을 넣었다(skill-creator 평가 루프와 description 최적화, superpowers 압박 시험). 아직 실행하지 않았다.
+- 흔한 함정 2개를 추가했다(검출하지 못하는 회귀 시험, CAD 연동 도구의 상태값을 판정으로 쓰기). 자체 시험은 53건에서 59건으로 늘었다.
+- 적용하지 않은 것:
+  - 훅으로 규칙을 강제하는 플러그인 묶음: 평가에서 실제로 깨지는 규칙을 본 뒤에 정한다.
+  - 종료를 막고 반복하는 루프(ralph-wiggum): 수정 루프의 STOP 규칙과 충돌한다.
+  - description 변경: 발동 평가 뒤에 정한다.
+
 ## 라이선스
 
 GPL v3를 적용하고 `LICENSE`를 추가했다(v4 이후 커밋부터).

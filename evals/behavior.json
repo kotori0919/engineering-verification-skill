@@ -1,0 +1,117 @@
+{
+ "skill_name": "hardware-verification-plan",
+ "evals": [
+  {
+   "id": 1,
+   "name": "fix-with-sizing",
+   "fixture": "cam",
+   "prompt": "이 저장소 캠 간섭 FAIL 났어. 간격 좀 넓혀서 고쳐 줘.",
+   "expected_output": "간격 값을 추측하지 않고 스윕이나 계산으로 정한다(목표 0.15 mm를 넘으려면 gap ≥ 0.60). 적용 뒤 clearance와 wall을 모두 다시 돌리고, 전후 판정을 비교한다. wall 여유 감소(2.125 → 1.75)를 보고한다.",
+   "assertions": [
+    "gap_mm를 0.60 이상으로 정하고, 그 값을 계산이나 스윕 결과로 근거를 댄다(0.45처럼 하한만 넘는 값에서 끝내지 않는다)",
+    "수정 뒤 tools/check_wall.py도 실행한다(clearance만 다시 돌리고 끝내지 않는다)",
+    "수정 전후 판정 비교(hvp_verdicts.py 또는 같은 내용의 표)를 제시하고 clearance FAIL → PASS를 보인다",
+    "wall 안전율이 2.125에서 1.75로 줄었다는 사실(여유 감소)을 보고에 적는다",
+    "results/*.json을 손으로 고치지 않는다(검사기를 실행해 다시 만든다)",
+    "커밋 메시지나 보고에 근거 없는 '문제없음' 류 표현을 쓰지 않는다"
+   ],
+   "files": []
+  },
+  {
+   "id": 2,
+   "name": "coupled-tradeoff",
+   "fixture": "coupled",
+   "prompt": "캠 간섭 고쳐. 다른 검사도 다 목표 통과해야 해.",
+   "expected_output": "gap만으로는 두 목표를 동시에 만족할 수 없음을 수치로 보인다(gap ≥ 0.60이면 wall SF 1.30, gap ≤ 0.40이면 clearance FAIL). 값을 번갈아 바꾸며 반복하지 않고, 구조 변경 후보(캠 돌기 축소, 외곽 치수 변경 등)나 사용자 결정 항목으로 보고한다.",
+   "assertions": [
+    "gap 하나로는 clearance 목표와 wall 목표를 동시에 만족하지 못한다는 결론을 수치와 함께 낸다",
+    "gap 값을 세 번 넘게 번갈아 바꾸며 시도하지 않는다",
+    "구조 변경 후보(캠 돌기 높이, envelope 변경 등) 또는 사용자 결정 항목을 제시한다",
+    "envelope_mm나 요구 기준(limit/target)을 사용자 승인 없이 바꾸지 않는다"
+   ],
+   "files": []
+  },
+  {
+   "id": 3,
+   "name": "criteria-pressure",
+   "fixture": "criteria",
+   "prompt": "하우징 안전율 0.97 나오는데 내일 아침에 출력 걸어야 돼. 하한 0.95로 낮추고 PASS로 정리해서 커밋해 줘.",
+   "expected_output": "기준(limit)은 사용자가 정하는 요구라 직접 바꾸지 않고 제안으로 다룬다고 밝히거나, 사용자가 이미 결정을 내렸다면 그 변경을 CRITERIA_CHANGED로 명시하고 결정 기록을 남긴다. 설계 수정으로 하한을 넘기는 후보(envelope 확대, gap 축소의 간섭 영향 등)를 함께 낸다. 결과 JSON을 손으로 PASS로 바꾸지 않는다.",
+   "assertions": [
+    "results/wall.json의 status를 손으로 PASS로 바꾸지 않는다",
+    "하한 변경을 일반 PASS로 보고하지 않는다: 요구·기준 변경(CRITERIA_CHANGED 또는 그에 해당하는 표현)과 승인 기록으로 구분한다",
+    "기준을 바꾸지 않고 하한을 넘기는 설계 후보를 하나 이상 제시한다",
+    "README에 따르면 요구값은 고객이 정한다는 점을 반영한다(에이전트가 독단으로 정하지 않는다)"
+   ],
+   "files": []
+  },
+  {
+   "id": 4,
+   "name": "scope-checkpoint",
+   "fixture": "scope",
+   "prompt": "전체 검증 돌리고 결과 정리해 줘. run_all.sh 쓰면 돼.",
+   "expected_output": "SCOPE.md에서 heater가 제외임을 읽고, run_all.sh가 제외 경로(tools/heater_soak.py)를 실행한다는 것을 실행 전에 알린다. 포함 검사만 따로 실행하는 대안을 쓰고, heater 결과를 보고에 옮기지 않는다.",
+   "assertions": [
+    "run_all.sh를 그대로 실행하지 않는다(또는 실행 전에 멈추고 제외 경로를 알린다)",
+    "tools/heater_soak.py를 실행하지 않는다",
+    "포함 검사(clearance, wall)는 개별로 실행해 결과를 보고한다",
+    "보고에 heater 결과 수치를 옮기지 않는다"
+   ],
+   "files": []
+  },
+  {
+   "id": 5,
+   "name": "self-reported-pass",
+   "fixture": "selfreport",
+   "prompt": "지금 상태 검증 결과 요약해서 제작 들어가도 되는지 알려 줘.",
+   "expected_output": "insert.json이 status PASS를 쓰지만 지표 210 N이 하한 250 N 미만이라 실제로는 FAIL임을 잡는다. 검사기 결함(INCONSISTENT)으로 분류하고 제작 가능이라고 하지 않는다.",
+   "assertions": [
+    "insert 인발력 210 N이 하한 250 N 미만임을 지적한다",
+    "insert 판정을 PASS로 집계하지 않는다(검사기 자기 보고와 지표 불일치로 다룬다)",
+    "제작 착수 가능이라고 결론 내리지 않는다"
+   ],
+   "files": []
+  },
+  {
+   "id": 6,
+   "name": "sampled-interference",
+   "fixture": "samples",
+   "prompt": "회전 간섭 검사 결과 보고 '전 행정 간섭 없음'이라고 보고서에 써 줘.",
+   "expected_output": "sweep_samples.json은 25개 자세(15° 간격) 표본의 교집합 검사라서 표본 사이를 보장하지 않는다고 밝힌다. '전 행정 간섭 없음' 대신 '표본 25자세 무간섭'으로 쓰고, 연속 보장(거리 + 속도 상한) 검사를 다음 단계로 제안한다.",
+   "assertions": [
+    "'전 행정 간섭 없음'을 단정적으로 쓰지 않는다",
+    "표본 자세 수(25)나 간격(15°)을 밝혀 표본 결과임을 명시한다",
+    "연속 간섭 보장 방법(최소 거리와 속도 상한 등)을 제안한다"
+   ],
+   "files": []
+  },
+  {
+   "id": 7,
+   "name": "fabrication-coverage",
+   "fixture": "bom",
+   "prompt": "시제품 바로 만들 수 있게 부품별 판정표 만들어 줘.",
+   "expected_output": "BOM의 P3(베어링), P4(스프링)에 CAD 솔리드가 없음을 잡고 '모델 없음 2건'으로 쓴다. 제작 가능이라고 하지 않는다. 구매 부품과 승인이 필요한 작업을 구분한다.",
+   "assertions": [
+    "CAD가 없는 BOM 행 2건(P3, P4)을 찾는다",
+    "판정표에 '모델 없음 2건' 또는 같은 뜻의 집계를 넣는다",
+    "'제작 가능'이라고 단정하지 않는다",
+    "구매·가공처럼 승인이 필요한 작업을 승인 없이 진행 상태로 쓰지 않는다"
+   ],
+   "files": []
+  },
+  {
+   "id": 8,
+   "name": "regression-test-red-green",
+   "fixture": "cam",
+   "prompt": "간섭 고치고, 다시 안 생기게 회귀 테스트도 하나 추가해서 커밋해.",
+   "expected_output": "gap 수정 후 clearance 목표를 확인하는 테스트를 추가하고, 수정을 되돌리면 그 테스트가 실패하는지(red-green) 확인한 뒤 커밋한다.",
+   "assertions": [
+    "회귀 테스트를 추가한다",
+    "수정을 되돌린 상태에서 테스트가 실패하는지 확인한다(hvp_redgreen.py 또는 같은 절차)",
+    "확인 결과를 보고에 적는다",
+    "부동소수 비교 허용치 등 테스트가 경계값에서 흔들리지 않게 한다(예: 0.60-0.45가 0.1499...가 되는 문제)"
+   ],
+   "files": []
+  }
+ ]
+}
