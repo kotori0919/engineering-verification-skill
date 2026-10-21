@@ -117,6 +117,104 @@ def fix_cases(root):
          and "results/clear.json" in out3, out3)
     sh("git checkout -q -- results", rv)
 
+    # ------------------------------------------------ uncertainty (INDETERMINATE)
+    W("results/u.json", {"status": "PASS", "metrics": {"sf": {"value": 1.05, "limit": 1.0, "target": 1.5,
+                                                              "uncertainty": 0.1}}})
+    rc, out = run(["hvp_verdicts.py", "--json"], rv)
+    o2 = json.loads(out[out.index("{"):]) if "{" in out else {"checks": {}}
+    u = o2["checks"].get("results/u.json", {})
+    case("uncertainty: clearing the limit by less than U is INDETERMINATE; recorded PASS is INCONSISTENT",
+         u.get("after") == "PASS" and "INCONSISTENT" in u.get("flags", []), out)
+    sys.path.insert(0, HERE)
+    import hvp_common as HC
+    case("uncertainty: metric_status known answers",
+         HC.metric_status({"value": 1.05, "limit": 1.0, "uncertainty": 0.1}) == "INDETERMINATE"
+         and HC.metric_status({"value": 1.2, "limit": 1.0, "target": 1.25, "uncertainty": 0.1}) == "PASS_BELOW_TARGET"
+         and HC.metric_status({"value": 1.4, "limit": 1.0, "target": 1.25, "uncertainty": 0.1}) == "PASS"
+         and HC.metric_status({"value": 0.95, "limit": 1.0, "uncertainty": 0.1}) == "FAIL"
+         and HC.metric_status({"value": 0.45, "limit": 0.5, "sense": "max", "uncertainty": 0.1}) == "INDETERMINATE")
+    os.remove(os.path.join(rv, "results/u.json"))
+
+    # ------------------------------------------------ gci
+    g = lambda h, f, *x: run(["hvp_gci.py", "--h", ",".join(map(str, h)), "--f", ",".join(map(str, f))] + list(x), rv)
+    fx = lambda c, p: [1 + c * h ** p for h in (0.1, 0.2, 0.4)]
+    rc, out = g((0.1, 0.2, 0.4), fx(0.3, 2), "--max-gci", "1")
+    case("gci: f = 1 + 0.3 h^2 recovers p = 2 and f_ext = 1", rc == 0 and "P        2.0000" in out and "F_EXT    1\n" in out, out)
+    rc, out = g((0.4, 0.1, 0.2), [1 + 0.3 * h for h in (0.4, 0.1, 0.2)], "--max-gci", "1")
+    case("gci: p = 1, unsorted input, GCI 3.64 % above a 1 % limit -> FAIL", rc == 1 and "P        1.0000" in out
+         and "GCI_FINE 3.6408" in out, out)
+    rc, out = g((0.1, 0.2, 0.4), (1.0, 1.02, 0.99))
+    case("gci: oscillatory convergence is reported unreliable", rc == 1 and "OSCILLATORY" in out, out)
+    rc, out = g((0.1, 0.12, 0.144), fx(0.3, 2))
+    case("gci: refinement ratio below 1.3 is warned", "RATIO_SMALL" in out, out)
+
+    # ------------------------------------------------ consensus
+    sfm = lambda v, u: {"metrics": {"sf": {"value": v, "limit": 1.0, "target": 1.5, "sense": "min", "uncertainty": u}}}
+    W("results/m_cf.json", dict(sfm(1.32, 0.05), method="closed form", provenance={"command": "python3 cf.py"}))
+    W("results/m_fe.json", dict(sfm(1.35, 0.08), method="FE", provenance={"command": "python3 fe.py"}))
+    W("results/m_fe2.json", dict(sfm(1.60, 0.05), method="FE coarse", provenance={"command": "python3 fe.py"}))
+    W("results/m_nou.json", {"metrics": {"sf": {"value": 1.32, "limit": 1.0}}})
+    Q = lambda f: "ev:results/%s.json#/metrics/sf/value" % f  # noqa: E731
+    rc, out = run(["hvp_consensus.py", "--q", Q("m_cf"), "--q", Q("m_fe")], rv)
+    case("consensus: 1.32±0.05 and 1.35±0.08 agree (E_n 0.32); verdict on bound 1.27 -> PASS_BELOW_TARGET",
+         "agree  E_n 0.318" in out and "conservative min(x - U) over all methods = 1.27" in out
+         and "RESULT  CONSENSUS -> PASS_BELOW_TARGET" in out and rc == 0, out)
+    rc, out = run(["hvp_consensus.py", "--q", Q("m_cf"), "--q", Q("m_fe2")], rv)
+    case("consensus: 1.32±0.05 vs 1.60±0.05 disagree -> BLOCKED, not averaged",
+         rc == 1 and "DIFFER E_n 3.96" in out and "RESULT  DISAGREE -> BLOCKED" in out, out)
+    rc, out = run(["hvp_consensus.py", "--q", Q("m_fe"), "--q", Q("m_fe2"), "--q", Q("m_nou")], rv)
+    case("consensus: same command flagged NOT_INDEPENDENT, missing uncertainty flagged",
+         "NOT_INDEPENDENT FE and FE coarse" in out and "NO_UNCERTAINTY" in out, out)
+    for f in ("m_cf", "m_fe", "m_fe2", "m_nou"):
+        os.remove(os.path.join(rv, "results/%s.json" % f))
+
+    # ------------------------------------------------ fatigue / fracture
+    import math as _m
+    import hvp_fatigue as FT
+    case("fatigue rainflow: [0,10,4,6,0] -> one full cycle of range 2 and two half cycles of range 10",
+         sorted(FT.rainflow([0, 10, 4, 6, 0])) == [(2, 5.0, 1.0), (10, 5.0, 0.5), (10, 5.0, 0.5)])
+    # Basquin S_a = 500 N^-0.1 -> N(100) = 5^10 = 9765625; 1000 cycles of ±100 MPa, zero mean
+    hist = ",".join(["-100", "100"] * 1000)
+    rc, out = run(["hvp_fatigue.py", "damage", "--values=" + hist, "--basquin", "500,-0.1", "--mean", "none",
+                   "--dmax", "0.3"], rv)
+    dline = [l for l in out.splitlines() if l.startswith("D_HISTORY")]
+    dval = float(dline[0].split()[1]) if dline else -1
+    case("fatigue damage: 2000 reversals = 999.5 cycles; Miner sum = 999.5 / 5^10",
+         abs(dval - 999.5 / 5 ** 10) < 1e-9 and rc == 0, out)
+    case("fatigue mean stress: Goodman S_a/(1-S_m/S_u), Gerber, SWT, compressive mean no benefit",
+         abs(FT.equivalent_amplitude(100, 200, "goodman", 400) - 200) < 1e-12
+         and abs(FT.equivalent_amplitude(100, 200, "gerber", 400) - 100 / 0.75) < 1e-12
+         and abs(FT.equivalent_amplitude(100, 100, "swt", 400) - _m.sqrt(200 * 100)) < 1e-12
+         and FT.equivalent_amplitude(100, -50, "goodman", 400) == 100)
+    rc, out = run(["hvp_fatigue.py", "damage", "--values=" + hist, "--basquin", "500,-0.1", "--mean", "none",
+                   "--se", "120"], rv)
+    case("fatigue endurance: amplitudes below S_e do no damage", "D_HISTORY 0 " in out + " ", out)
+    Np = FT.paris_cycles(1e-11, 3, 1.12, 80, 0.0005, 0.005)
+    Nn = FT.paris_numeric(1e-11, 3, 1.12, 80, 0.0005, 0.005)
+    g = 1e-11 * (1.12 * 80 * _m.sqrt(_m.pi)) ** 3
+    Nhand = 2 / g * (0.0005 ** -0.5 - 0.005 ** -0.5)
+    case("fracture Paris: closed form = hand formula 2/(C(YΔσ√π)^m)(a0^-1/2 - ac^-1/2) and numeric integration",
+         abs(Np - Nhand) / Nhand < 1e-12 and abs(Np - Nn) / Np < 1e-6, "%g %g %g" % (Np, Nn, Nhand))
+    rc, out = run(["hvp_fatigue.py", "lefm", "--Y", "1", "--sigma", "100", "--a", "0.01", "--kic", "30",
+                   "--min-margin", "2"], rv)
+    case("fracture LEFM: center crack K = σ√(πa) = 17.7245; margin 1.69 < 2 -> FAIL",
+         "= 17.7245 MPa" in out and "= 1.69257" in out and rc == 1, out)
+    rc, out = run(["hvp_fatigue.py", "lefm", "--Y", "1", "--sigma", "50", "--a", "0.001", "--kic", "30",
+                   "--sy", "55", "--thickness", "0.004"], rv)
+    case("fracture LEFM: plane-strain size requirement not met is warned", "NOT met" in out and "FAD" in out, out)
+
+    # ------------------------------------------------ flow
+    rc, out = run(["hvp_flow.py", "pipe", "--D", "0.006", "--L", "0.5", "--Q", "2e-6", "--dp-max", "30"], rv)
+    case("flow: laminar friction drop equals Hagen-Poiseuille 31.438 Pa; above 30 Pa limit -> FAIL",
+         "Hagen-Poiseuille 128 μ L Q / (π D^4) = 31.438 Pa (friction part 31.438 Pa)" in out and rc == 1, out)
+    rc, out = run(["hvp_flow.py", "pipe", "--D", "0.02", "--L", "1", "--Q", "0.0015739"], rv)
+    fl = [l for l in out.splitlines() if l.startswith("FRICTION")]
+    fv = float(fl[0].split()[3]) if fl else 0
+    case("flow: smooth pipe Re 1e5, Colebrook within 2 % of Blasius 0.316 Re^-0.25 = 0.01777",
+         abs(fv - 0.01777) / 0.01777 < 0.02, out)
+    rc, out = run(["hvp_flow.py", "pipe", "--D", "0.01", "--L", "1", "--Q", "2.4e-5"], rv)
+    case("flow: transitional Reynolds number flagged", "TRANSITIONAL" in out, out)
+
     # ------------------------------------------------ impact
     ri = new_repo(root, "repo-impact")
     os.makedirs(os.path.join(ri, "src")); os.makedirs(os.path.join(ri, "ev"))
@@ -174,6 +272,13 @@ def fix_cases(root):
     rc, out = run(["hvp_sweep.py", "--cmd", "python3 tools/peak.py {value}", "--out", "results/s.json", "--metric", "c",
                    "--values", "0.2,0.4,0.6"], rs)
     case("sweep: non-monotonic response flagged", "MONOTONIC no" in out and "not monotonic" in out, out)
+    rc, out = run(sweep[:-1] + ["0.2,0.6", "--refine", "5"], rs)
+    bl = [l for l in out.splitlines() if l.startswith("BOUNDARY")]
+    def brk(l):
+        w = l.split(); return float(w[5]), float(w[7])
+    case("sweep --refine: bisection brackets the limit (0.3) and target (0.5) crossings",
+         len(bl) == 2 and brk(bl[0])[0] <= 0.3 <= brk(bl[0])[1] and brk(bl[1])[0] <= 0.5 <= brk(bl[1])[1]
+         and all(brk(l)[1] - brk(l)[0] <= 0.4 / 2 ** 4 + 1e-9 for l in bl), out)
     rc, out = run(["hvp_sweep.py", "--cmd", "exit 1", "--out", "results/s.json", "--metric", "c", "--values", "1,2"], rs)
     case("sweep: failed run -> exit 2", rc == 2 and "RUN_FAILED" in out, out)
     wts = subprocess.run(["git", "worktree", "list"], cwd=rs, capture_output=True, text=True).stdout.strip().splitlines()

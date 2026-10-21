@@ -35,6 +35,10 @@ SKILL.md 1·6·7·8·9단계의 실행 절차. 반복되는 점검은 `scripts/`
 | `hvp_verdicts.py` | 수정 전후 판정 비교: FIXED, REGRESSED, LOST, MARGIN_DROP, CRITERIA_CHANGED, INCONSISTENT | 0 ACCEPTABLE, 1 NOT_ACCEPTABLE |
 | `hvp_fixloop.py` | 이슈별 시도 기록, 예산·반복·결합·진동·정체 감지 | 0 계속, 3 멈춤 |
 | `hvp_redgreen.py` | 회귀 시험이 수정이 있을 때 통과하고 수정을 되돌리면 실패하는지 확인 | 0 RED_GREEN_OK, 1 그 외 |
+| `hvp_gci.py` | 메시·시간 간격 3단의 관측 차수, 외삽값, GCI(수치 오차) | 0 기준 안, 1 초과·신뢰 불가 |
+| `hvp_consensus.py` | 독립 방법들의 합의(E_n), 보수 경계 판정 | 0 합의·통과, 1 그 외 |
+| `hvp_fatigue.py` | 레인플로, 평균응력 보정·Miner 손상, Paris 균열 성장, LEFM K 검사 | 0 통과, 1 미달 |
+| `hvp_flow.py` | 레이놀즈 수, 마찰 계수(Colebrook·Haaland 대조), 압력 손실 | 0 통과, 1 초과 |
 | `hvp_cite.py` | 값 하나의 출처·상태 보기(`get`), 보고서의 인용 검사와 출처 없는 숫자 찾기(`check`) | get 0/1, check 0 깨끗, 1 문제 |
 | `selftest.py` | 위 도구들의 known-answer 자체 시험(임시 저장소에서) | 0 전부 통과 |
 
@@ -269,7 +273,7 @@ python3 $S/hvp_sweep.py --cmd "..." --out <증거> --metric <m> --values v1,v2,v
     --report $T/sweep-$I-<후보>.json
 ```
 
-- 출력의 FIRST_LIMIT, FIRST_TARGET, MONOTONIC, TRANSITION을 1d 비교표에 옮긴다. 값 고르기와 해석은 oracle-catalog 31절에 있다.
+- 출력의 FIRST_LIMIT, FIRST_TARGET, MONOTONIC, TRANSITION을 1d 비교표에 옮긴다. 경계를 좁혀야 하면 값을 촘촘히 늘리지 말고 `--refine N`으로 상태가 바뀌는 구간만 이분한다(BOUNDARY 줄이 그 결과다). 값 고르기와 해석은 oracle-catalog 31절에 있다.
 - 부작용이 예상되는 지표(30절 표의 "흔한 부작용")도 같은 값으로 스윕해 둔다.
 - 후보 선택이 사용자 결정 항목(SKILL.md 7.5)이면 여기서 멈추고 비교표를 낸다.
 

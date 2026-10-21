@@ -40,7 +40,7 @@ json.dump({"layer": "L3", "question": "physical", "inputs": {"params/cam.json": 
            "metrics": {"safety_factor": {"value": sf, "limit": 1.0, "target": 1.5, "sense": "min"},
                        "wall_mm": {"value": round(t, 4), "limit": 0.8, "sense": "min"}},
            "scope": "housing wall, static closing load, room temperature",
-           "assumptions": ["wall left = envelope - 2*gap", "allowable scaled by k (mock material model)"],
+           "assumptions": ["wall left = envelope - 2*gap", "safety factor = wall / %(k)s mm (mock: %(k)s mm of wall per unit SF, no material model)"],
            "limitations": ["no fatigue", "no creep", "no print orientation effect"],
            "criteria_source": {"safety_factor": "customer spec (README)", "wall_mm": "(proposed)"},
            "provenance": {"command": "python3 tools/check_wall.py"},

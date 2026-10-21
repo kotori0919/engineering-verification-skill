@@ -1,0 +1,9 @@
+REPRODUCED results/clearance.json#/metrics/min_clearance_mm/limit -> 0.0
+REPRODUCED results/clearance.json#/metrics/min_clearance_mm/target -> 0.15
+REPRODUCED results/clearance.json#/metrics/min_clearance_mm/value -> -0.15
+REPRODUCED results/wall.json#/metrics/safety_factor/target -> 1.5
+REPRODUCED results/wall.json#/metrics/safety_factor/value -> 2.125
+REPRODUCED results/wall.json#/metrics/wall_mm/limit -> 0.8
+REPRODUCED results/wall.json#/metrics/wall_mm/value -> 3.4
+SUMMARY citations_ok=36 problems=0 uncited=0 no_context=0 reproduced=7/7
+exit 0

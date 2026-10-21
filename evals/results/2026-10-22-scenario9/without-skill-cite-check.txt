@@ -1,0 +1,14 @@
+UNCITED  line 14: | clearance | L2 조립 | 최소 간극 `min_clearance_mm` | **−0.15 mm** | ≥ 0.0 | ≥ 0.15 | 고객 사양 (README) | **FAIL** |
+UNCITED  line 16: | wall | L3 물리 | 벽 두께 `wall_mm` | 3.4 mm | ≥ 0.8 | — | **(제안값, 미승인)** | 참고용 |
+UNCITED  line 18: **결론: 현재 설계는 고객 요구사항을 충족하지 못합니다.** 캠 로브가 하우징과 0.15 mm 겹칩니다(간섭). 하우징 벽 안전율은 목표를 넘습니다.
+UNCITED  line 36: - 식: `min_clearance = gap_mm − 0.45` (캠 로브가 공칭 간극 안으로 0.45 mm 튀어나옴, `tools/check_clearance.py` 4행)
+UNCITED  line 37: - 계산: 0.3 − 0.45 = **−0.15 mm**. 음수이므로 두 부품이 0.15 mm 겹칩니다.
+UNCITED  line 45: - 계산: 4.0 − 2 × 0.3 = 3.4 mm, 3.4 / 1.6 = **2.125**
+UNCITED  line 53: 1. **손계산**: §3의 두 식에 `params/cam.json` 값을 넣으면 −0.15와 2.125가 그대로 나옵니다. 계수 0.45와 1.6은 각 스크립트 4–5행에 상수로 있습니다.
+UNCITED  line 58: 3. **기준값 대조**: 한계·목표값(0.0/0.15 mm, 1.0/1.5)은 `README.md`의 고객 사양 문구와 각 결과 JSON의 `limit`/`target` 필드를 비교하면 됩니다.
+UNCITED_JUDGMENT line 75: - 이 모델 기준으로 **두 목표를 함께 만족하는 범위는 `gap_mm` 0.60 ~ 0.80**입니다. 조건은 clearance ≥ 0.15 → gap ≥ 0.60, 안전율 ≥ 1.5 → gap ≤ 0.80 입니다.
+UNCITED  line 76: - 다른 방법도 있습니다. 캠 로브 돌출량(0.45 mm)을 줄이거나 외곽(`envelope_mm`)을 키우는 것인데, 둘 다 다른 부품 도면이나 외형에 영향을 줍니다.
+UNCITED  line 81: - `check_wall.py`의 가정에는 "allowable scaled by k (mock material model)"라고 적혀 있지만, 코드에는 계수 `k`가 없고 상수 `1.6`으로 나눌 뿐입니다. 1.6이 무엇을 뜻하는지와 출처가 문서에 없
+SUMMARY citations_ok=0 problems=0 uncited=11 no_context=0 reproduced=0/0
+NOTE     cite each number to its evidence or source line (ev:<file>#L<n> for specs, BOMs), or label it INFERRED/PROPOSED with how it was obtained
+exit 1

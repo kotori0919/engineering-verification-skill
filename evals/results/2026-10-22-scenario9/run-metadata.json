@@ -1,0 +1,5 @@
+{
+ "source": "task notifications for the two sub-agent runs in the authoring session (usage block)",
+ "with_skill": {"subagent_tokens": 200843, "tool_uses": 33, "duration_ms": 606072, "report_chars": 11964},
+ "without_skill": {"subagent_tokens": 80218, "tool_uses": 6, "duration_ms": 118854, "report_chars": 4359}
+}

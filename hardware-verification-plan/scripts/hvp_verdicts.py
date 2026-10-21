@@ -22,9 +22,13 @@ Classes (one per check)
 Flags (added to the class)
   MARGIN_DROP       same status but a metric's margin to its limit shrank by more than --margin-tol
   CRITERIA_CHANGED  a metric's limit, target or sense differs between before and after
-  INCONSISTENT      recorded status is better than the status its own metrics imply
+  INCONSISTENT      recorded status is better than the status its own metrics imply (new evidence too)
+  UNCERTAINTY_CHANGED  a metric's stated uncertainty changed: can turn INDETERMINATE into PASS, so a
+                    person checks where the new uncertainty came from
   MODEL_CHANGE      now PASS_BY_MODEL_CHANGE (needs independent confirmation, SKILL 7.11)
-Rank: FAIL < PASS_BY_MODEL_CHANGE < PASS_BELOW_TARGET < PASS.
+Rank: FAIL < INDETERMINATE < PASS_BY_MODEL_CHANGE < PASS_BELOW_TARGET < PASS.
+INDETERMINATE (a metric with "uncertainty" clears its limit by less than that uncertainty)
+is not a pass: FAIL -> INDETERMINATE is IMPROVED, never FIXED.
 
 VERDICT ACCEPTABLE needs: no REGRESSED, no LOST, no CRITERIA_CHANGED (unless --allow-criteria,
 which is for a user-approved requirement change), no INCONSISTENT after, and every
@@ -61,6 +65,11 @@ def fmt_metrics(b, a):
 
 def classify(b, a, tol):
     flags = []
+    if a is not None:
+        # self-reported status better than its own metrics imply: checked for new evidence too
+        rec, der = a.get("status"), C.derived_status(a.get("metrics"))
+        if rec in C.RANK and der in C.RANK and C.RANK[rec] > C.RANK[der]:
+            flags.append("INCONSISTENT")
     if b is None:
         return "NEW", flags
     sb, sa = C.effective_status(b), (C.effective_status(a) if a else None)
@@ -73,9 +82,11 @@ def classify(b, a, tol):
             if any(mb.get(x) != ma.get(x) for x in ("limit", "target", "sense")):
                 flags.append("CRITERIA_CHANGED")
                 break
-        rec, der = a.get("status"), C.derived_status(a.get("metrics"))
-        if rec in C.RANK and der in C.RANK and C.RANK[rec] > C.RANK[der]:
-            flags.append("INCONSISTENT")
+        for k in set(b.get("metrics", {})) & set(a.get("metrics", {})):
+            mb, ma = b["metrics"][k], a["metrics"][k]
+            if isinstance(mb, dict) and isinstance(ma, dict) and mb.get("uncertainty") != ma.get("uncertainty"):
+                flags.append("UNCERTAINTY_CHANGED")
+                break
         if sa == "PASS_BY_MODEL_CHANGE" and sb != sa:
             flags.append("MODEL_CHANGE")
     if rb is not None and ra is None:
@@ -85,7 +96,7 @@ def classify(b, a, tol):
     if rb is None:
         return "NEW", flags
     if ra > rb:
-        return ("FIXED" if sb == "FAIL" else "IMPROVED"), flags
+        return ("FIXED" if sb == "FAIL" and sa in C.PASSING else "IMPROVED"), flags
     if ra < rb:
         return "REGRESSED", flags
     if a is not None and "CRITERIA_CHANGED" not in flags:
@@ -175,7 +186,8 @@ def main():
                                                    "  " + r["metrics"] if r["metrics"] else ""))
         summ = " ".join("%s=%d" % (c.lower(), count(c)) for c in order)
         summ += " " + " ".join("%s=%d" % (f.lower(), flagc(f)) for f in
-                               ("MARGIN_DROP", "CRITERIA_CHANGED", "INCONSISTENT", "MODEL_CHANGE"))
+                               ("MARGIN_DROP", "CRITERIA_CHANGED", "INCONSISTENT", "MODEL_CHANGE",
+                                "UNCERTAINTY_CHANGED"))
         print("SUMMARY", summ)
         print("VERDICT", verdict + (": " + "; ".join(reasons) if reasons else ""))
     return 1 if reasons else 0

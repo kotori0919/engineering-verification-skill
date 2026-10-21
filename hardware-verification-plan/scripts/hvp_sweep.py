@@ -2,7 +2,7 @@
 """Size a design change from data: run a cheap oracle over candidate parameter values.
 
   hvp_sweep.py --cmd "python3 src/build.py --gap {value} && python3 tools/clearance.py" \
-               --out results/clearance.json --metric min_clearance_mm --values 0.2,0.3,0.4,0.6
+               --out results/clearance.json --metric min_clearance_mm --values 0.2,0.3,0.4,0.6 [--refine 4]
                [--limit 0.2 --target 0.5 --sense min] [--commit HEAD] [--inputs data/x.step]
                [--timeout 1800] [--report /tmp/sweep.json] [--keep]
 
@@ -19,6 +19,9 @@ List --values in the order of increasing change (smallest edit first). The repor
 status per value, whether the metric is monotonic over the list, the status transitions, and
 the first value reaching the limit and the target. A sweep evaluates candidates; it is not a
 verdict. Apply the chosen value and verify it through the normal chain (SKILL 7.8).
+--refine N bisects between neighbouring values whose status differs, N rounds, and reports each
+BOUNDARY bracket: the limit/target crossing to within the final width, with far fewer runs than
+a dense sweep (efficiency; still a sample, so check monotonicity).
 Exit codes: 0 some value reaches the target (or the limit when no target), 1 none does,
 2 a run failed, 3 setup error.
 """
@@ -70,6 +73,8 @@ def main():
     ap.add_argument("--commit", default=None, help="evaluate this commit only (default: HEAD + working changes)")
     ap.add_argument("--inputs", nargs="*", default=[])
     ap.add_argument("--timeout", type=int, default=1800)
+    ap.add_argument("--refine", type=int, default=0,
+                    help="bisect N times between neighbouring values whose status differs (numeric values)")
     ap.add_argument("--report")
     ap.add_argument("--keep", action="store_true")
     a = ap.parse_args()
@@ -84,8 +89,12 @@ def main():
             return 3
 
     base = tempfile.mkdtemp(prefix="hvp-sweep-")
-    rows, failed = [], []
-    for i, v in enumerate(values):
+    failed = []
+    counter = [0]
+
+    def run_one(v):
+        i = counter[0]
+        counter[0] += 1
         wt = C.candidate_worktree(top, base, "wt-%d" % i, a.commit or "HEAD", with_changes=a.commit is None,
                                   inputs=a.inputs)
         try:
@@ -100,21 +109,41 @@ def main():
             outp = os.path.join(wt, a.out)
             if rc != 0 or not os.path.isfile(outp):
                 failed.append(v)
-                rows.append({"value": v, "metric": None, "status": "RUN_FAILED", "log": log})
-                continue
+                return {"value": v, "metric": None, "status": "RUN_FAILED", "log": log}
             try:
                 m = dict(find_metric(json.load(open(outp)), a.metric))
             except (KeyError, IndexError, ValueError) as e:
                 failed.append(v)
-                rows.append({"value": v, "metric": None, "status": "RUN_FAILED", "log": str(e)})
-                continue
+                return {"value": v, "metric": None, "status": "RUN_FAILED", "log": str(e)}
             for k in ("limit", "target", "sense"):
                 if getattr(a, k) is not None:
                     m[k] = getattr(a, k)
-            rows.append({"value": v, "metric": m.get("value"), "limit": m.get("limit"), "target": m.get("target"),
-                         "sense": m.get("sense", "min"), "status": C.metric_status(m) or "UNJUDGED"})
+            return {"value": v, "metric": m.get("value"), "limit": m.get("limit"), "target": m.get("target"),
+                    "sense": m.get("sense", "min"), "status": C.metric_status(m) or "UNJUDGED"}
         finally:
             C.git("worktree", "remove", "--force", wt, cwd=top, check=False)
+
+    rows = [run_one(v) for v in values]
+    refined = []
+    if a.refine:
+        try:
+            pts = sorted(rows, key=lambda r: float(r["value"]))
+        except ValueError:
+            print("NOTE --refine needs numeric values; skipped")
+            pts = None
+        for _ in range(a.refine if pts else 0):
+            new = []
+            for x, y in zip(pts, pts[1:]):
+                if x["status"] != y["status"] and "RUN_FAILED" not in (x["status"], y["status"]):
+                    mid = "%.10g" % ((float(x["value"]) + float(y["value"])) / 2)
+                    if mid not in (x["value"], y["value"]):
+                        new.append(run_one(mid))
+            if not new:
+                break
+            refined += new
+            pts = sorted(pts + new, key=lambda r: float(r["value"]))
+        if pts and refined:
+            rows_sorted = pts
     C.git("worktree", "prune", cwd=top, check=False)
 
     src = "commit %s" % a.commit if a.commit else "HEAD %s + working changes" % C.head(top)[:12]
@@ -141,6 +170,12 @@ def main():
     first_target = next((r["value"] for r in rows if r["status"] == "PASS"), None)
     print("FIRST_LIMIT", first_pass or "none")
     print("FIRST_TARGET", (first_target or "none") if has_target else "n/a (no target)")
+    if refined:
+        print("REFINED %d extra run(s) by bisection between status changes:" % len(refined))
+        for x, y in zip(rows_sorted, rows_sorted[1:]):
+            if x["status"] != y["status"]:
+                print("BOUNDARY %s -> %s between %s and %s (width %.6g)" % (
+                    x["status"], y["status"], x["value"], y["value"], abs(float(y["value"]) - float(x["value"]))))
     if mono == "no":
         print("NOTE metric is not monotonic over these values: samples say nothing between them; "
               "refine around each TRANSITION before choosing")
@@ -148,7 +183,7 @@ def main():
         print("RESULT RUN_FAILED for %s (logs in %s)" % (",".join(failed), base))
     if a.report:
         with open(a.report, "w") as f:
-            json.dump({"metric": a.metric, "source": src, "rows": rows, "monotonic": mono,
+            json.dump({"metric": a.metric, "source": src, "rows": rows, "refined": refined, "monotonic": mono,
                        "first_limit": first_pass, "first_target": first_target}, f, indent=1)
     if a.keep or failed:
         print("work dir kept:", base)

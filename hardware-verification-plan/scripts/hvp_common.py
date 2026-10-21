@@ -262,7 +262,9 @@ def foreign_processes(root):
 #   {"checks": [{"id": "gear_mesh", "status": "FAIL", "metrics": {...}}]}
 # sense "min": value must be >= limit (bigger is better); "max": value must be <= limit.
 
-RANK = {"FAIL": 0, "PASS_BY_MODEL_CHANGE": 1, "PASS_BELOW_TARGET": 2, "PASS": 3}
+# INDETERMINATE: passes the limit only by less than its own uncertainty (cannot be told from FAIL)
+RANK = {"FAIL": 0, "INDETERMINATE": 1, "PASS_BY_MODEL_CHANGE": 2, "PASS_BELOW_TARGET": 3, "PASS": 4}
+PASSING = ("PASS", "PASS_BELOW_TARGET", "PASS_BY_MODEL_CHANGE")
 LIST_KEYS = ("checks", "cases", "results", "gates")
 
 
@@ -271,10 +273,14 @@ def metric_status(m):
     if not isinstance(m, dict) or not _num(m.get("value")) or not _num(m.get("limit")):
         return None
     v, lim, tgt = m["value"], m["limit"], m.get("target")
+    u = abs(m["uncertainty"]) if _num(m.get("uncertainty")) else 0.0
     lo = m.get("sense", "min") != "max"
     if (v < lim) if lo else (v > lim):
         return "FAIL"
-    if _num(tgt) and ((v < tgt) if lo else (v > tgt)):
+    # the value must clear the limit (and the target) by more than its own uncertainty
+    if (v - u < lim) if lo else (v + u > lim):
+        return "INDETERMINATE"
+    if _num(tgt) and ((v - u < tgt) if lo else (v + u > tgt)):
         return "PASS_BELOW_TARGET"
     return "PASS"
 

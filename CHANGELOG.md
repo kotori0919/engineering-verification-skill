@@ -2,6 +2,35 @@
 
 모든 날짜는 2026-10-19(KST). 각 버전은 같은 이름의 git 태그로 표시한다.
 
+## v7 — 정확도, 효율, 복합 검증, 피로·유체·파괴
+
+- **불확도를 판정에 넣었다**: 지표에 `uncertainty`를 적으면, 하한을 그 불확도보다 적게 넘은 값은 INDETERMINATE다.
+  - INDETERMINATE는 PASS로 세지 않는다. FAIL → INDETERMINATE는 IMPROVED이고 FIXED가 아니다.
+  - 불확도가 바뀌면 `hvp_verdicts.py`가 UNCERTAINTY_CHANGED로 표시한다.
+- **`hvp_gci.py`**: 메시·시간 간격 3단의 관측 차수, Richardson 외삽값, 미세 메시 GCI를 낸다(Celik et al. 2008, ASME V&V 20 절차). 진동 수렴과 작은 세분비는 경고한다.
+- **스윕 효율**: `hvp_sweep.py --refine N`이 상태가 바뀌는 구간만 이분해 경계를 좁힌다.
+- **복합 검증 `hvp_consensus.py`**: 독립 방법들의 값 ± U에서 쌍별 E_n(ISO 13528)을 계산한다.
+  - 합의하면 보수 경계로 판정하고, 불일치하면 BLOCKED다. 평균을 내지 않는다.
+  - 같은 명령에서 나온 결과는 NOT_INDEPENDENT로 표시한다.
+- **`hvp_fatigue.py`**:
+  - 레인플로(ASTM E1049-85)
+  - Goodman·Gerber·SWT 평균응력 보정, Basquin·점 S-N, 내구 한도, Miner 손상
+  - Paris 균열 성장 수명(폐형식과 수치 적분 대조)
+  - LEFM K 여유와 평면 변형 유효성
+- **`hvp_flow.py`**: 레이놀즈 수와 영역, 층류는 Hagen–Poiseuille 대조, 난류는 Colebrook와 Haaland 대조, 천이 영역 표시, 국부 손실.
+- **oracle-catalog 33–40절 추가**: 복합 검증, V&V와 정확도(코드 검증·해 검증·확인, QMU, 감도), 검사 효율, 피로, 유체·CFD, 파괴, 진동·모달, 크리프·온도 의존. SKILL.md 오라클 배정표에 7행을 더했다.
+- **레인플로 독립 대조**:
+  - 대상: PyPI `rainflow` 3.2.0과 무작위 이력 20,000건
+  - 결과: 차이 322건은 모두 2점 이력이었다. 단일 범위를 이 skill은 반 사이클로 세고, 그 패키지는 세지 않는다. 3점 이상 이력에서는 차이가 0이다.
+  - 재현: `pip install rainflow==3.2.0` 후 `hvp_fatigue.rainflow`와 `rainflow.extract_cycles`를 같은 무작위 이력(seed 0–19999, 길이 2–60, 값 −10–10)에 돌려 (범위, 평균)별 사이클 수를 비교한다.
+- **평가 시나리오 9 실행**(`evals/results/2026-10-22-scenario9/`):
+  - skill 있음: 인용 36개, 재현 7/7, uncited 0
+  - skill 없음: uncited 11. 다만 수식·손계산·결정 넘기기는 했다.
+  - 비용: skill 쪽이 토큰 2.5배, 시간 5배
+  - 이 결과로 보고서 본문을 각주 인용 기본으로 바꾸고, 해시가 같은 이중 실행은 다시 하지 않게 했다. 두 실행이 함께 지적한 모의 저장소의 가정 문구 결함도 고쳤다.
+- **`hvp_verdicts.py` 결함 수정**: 새로 생긴 증거(NEW)에서 자기 보고 PASS와 지표 불일치(INCONSISTENT)를 검사하지 않던 결함을 불확도 시험이 찾았다.
+- 자체 시험은 64건에서 84건으로 늘었다.
+
 ## v6.1 — v6 자아비판 반영
 
 v6는 숫자의 출처는 줬지만 뜻은 주지 않았다. 손으로 고친 증거도 인용 검사를 통과했고, 검사 휴리스틱이 양쪽으로 틀렸다. 이 세 가지를 고쳤다.
