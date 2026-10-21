@@ -119,6 +119,8 @@ def main():
 
     src = "commit %s" % a.commit if a.commit else "HEAD %s + working changes" % C.head(top)[:12]
     print("SWEEP %s over %s (%s)" % (a.metric, ",".join(values), src))
+    print("CMD     each value ran: " + a.cmd.replace("{value}", "<value>") + "   (in a temporary worktree; read --out "
+          + a.out + ")")
     print("  %-12s %-14s %s" % ("value", "metric", "status"))
     for r in rows:
         print("  %-12s %-14s %s" % (r["value"], r["metric"], r["status"]))

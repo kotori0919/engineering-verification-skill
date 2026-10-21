@@ -279,7 +279,9 @@
   {"status": "PASS_BELOW_TARGET", "layer": "L3", "question": "physical",
    "inputs": {"source/build_bracket.py": "<sha256>", "params/bracket.json": "<sha256>"},
    "metrics": {"safety_factor": {"value": 1.32, "limit": 1.0, "target": 1.5, "sense": "min"},
-               "deflection_mm": {"value": 0.21, "limit": 0.5, "target": 0.3, "sense": "max"}}}
+               "deflection_mm": {"value": 0.21, "limit": 0.5, "target": 0.3, "sense": "max"}},
+   "criteria_source": {"safety_factor": "customer spec rev C §4.2", "deflection_mm": "(제안)"},
+   "provenance": {"command": "python3 tools/check_bracket.py", "commit": "<sha>", "tool_sha256": "<sha256>"}}
   ```
 
   - `sense`가 `min`이면 값이 클수록 좋고 `value >= limit`이어야 한다. `max`이면 반대다. 생략하면 `min`이다.
@@ -287,6 +289,8 @@
   - 기록된 `status`가 지표에서 유도한 상태보다 좋으면 INCONSISTENT로 잡힌다. 자기 보고 PASS를 걸러 내는 장치다.
   - `layer`는 L0–L5 문자열이다. `hvp_impact.py`가 재실행 순서를 정할 때 쓴다.
   - `inputs`는 `hvp_stale.py`가 인식하는 해시 기록 형식이다(runbook 4절).
+  - `provenance`는 사용자가 이 값을 다시 만들 수 있게 하는 기록이다. `command`는 저장소 루트에서 그대로 돌아가는 명령, `commit`은 실행한 커밋, `tool_sha256`은 검사기 파일 해시다. `hvp_cite.py get`이 이것을 보여 준다.
+  - `criteria_source`는 하한·목표가 어디서 왔는지(사용자, 고객 사양, 규격, "(제안)")를 적는다. 기준의 주인이 보이게 하기 위해서다.
 - **기존 저장소에 맞추기**: 저장소의 증거 형식이 다르면, 증거를 쓰는 검사기에 `metrics`와 `layer`를 더하는 작업 패키지를 먼저 낸다(보통 검사기마다 몇 줄). 그 전까지 `hvp_verdicts.py`는 상태 비교만 할 수 있다. 이 한계를 보고에 적는다.
 - **known-answer**: `scripts/selftest.py`의 verdicts 사례(FIXED, REGRESSED, LOST, MARGIN_DROP, CRITERIA_CHANGED, INCONSISTENT).
 

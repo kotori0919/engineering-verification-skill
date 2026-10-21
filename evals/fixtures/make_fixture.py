@@ -21,6 +21,8 @@ c = round(p["gap_mm"] - 0.45, 4)            # cam lobe protrudes 0.45 mm into th
 st = "FAIL" if c < 0 else ("PASS_BELOW_TARGET" if c < 0.15 else "PASS")
 json.dump({"layer": "L2", "question": "assembly", "inputs": {"params/cam.json": h("params/cam.json")},
            "metrics": {"min_clearance_mm": {"value": c, "limit": 0.0, "target": 0.15, "sense": "min"}},
+           "criteria_source": {"min_clearance_mm": "customer spec (README)"},
+           "provenance": {"command": "python3 tools/check_clearance.py"},
            "status": st}, open("results/clearance.json", "w"), indent=1)
 print("clearance", st, c)
 '''
@@ -34,6 +36,8 @@ st = "FAIL" if sf < 1.0 else ("PASS_BELOW_TARGET" if sf < 1.5 else "PASS")
 json.dump({"layer": "L3", "question": "physical", "inputs": {"params/cam.json": h("params/cam.json")},
            "metrics": {"safety_factor": {"value": sf, "limit": 1.0, "target": 1.5, "sense": "min"},
                        "wall_mm": {"value": round(t, 4), "limit": 0.8, "sense": "min"}},
+           "criteria_source": {"safety_factor": "customer spec (README)", "wall_mm": "(proposed)"},
+           "provenance": {"command": "python3 tools/check_wall.py"},
            "status": st}, open("results/wall.json", "w"), indent=1)
 print("wall", st, sf)
 '''

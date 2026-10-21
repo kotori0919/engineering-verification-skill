@@ -97,6 +97,15 @@ def classify(b, a, tol):
     return "UNCHANGED", flags
 
 
+def describe(spec, top):
+    if spec in ("", "worktree"):
+        dirty = [l for l in C.git("status", "--porcelain", cwd=top).split("\n") if l.strip()]
+        return "working tree at %s, %d uncommitted path(s)" % (C.head(top)[:12], len(dirty))
+    if spec.startswith("git:"):
+        return "%s = commit %s" % (spec, C.git("rev-parse", spec[4:], cwd=top)[:12])
+    return "%s (directory snapshot)" % spec
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--before", default="git:HEAD")
@@ -153,6 +162,10 @@ def main():
                           "reasons": reasons}, indent=1, sort_keys=True))
     else:
         order = ["REGRESSED", "LOST", "FIXED", "IMPROVED", "NEW", "UNCHANGED"]
+        print("BEFORE", describe(a.before, top))
+        print("AFTER ", describe(a.after, top))
+        print("CHECK   each line: <class> <evidence file>[#id] <before> -> <after> [flags] <metric before -> after (criteria)>;"
+              " open the file, or: python3 hvp_cite.py get <file> /metrics/<name>/value")
         for cls in order:
             for cid, r in rows.items():
                 if r["class"] != cls or (cls == "UNCHANGED" and not r["flags"]):

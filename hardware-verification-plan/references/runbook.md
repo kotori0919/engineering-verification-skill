@@ -14,6 +14,7 @@ SKILL.md 1·6·7·8·9단계의 실행 절차. 반복되는 점검은 `scripts/`
 7. 증거 무결성 규칙
 8. 제작 착수 준비 절차
 9. 설계 수정 루프
+10. 보고와 인용
 
 ---
 
@@ -34,6 +35,7 @@ SKILL.md 1·6·7·8·9단계의 실행 절차. 반복되는 점검은 `scripts/`
 | `hvp_verdicts.py` | 수정 전후 판정 비교: FIXED, REGRESSED, LOST, MARGIN_DROP, CRITERIA_CHANGED, INCONSISTENT | 0 ACCEPTABLE, 1 NOT_ACCEPTABLE |
 | `hvp_fixloop.py` | 이슈별 시도 기록, 예산·반복·결합·진동·정체 감지 | 0 계속, 3 멈춤 |
 | `hvp_redgreen.py` | 회귀 시험이 수정이 있을 때 통과하고 수정을 되돌리면 실패하는지 확인 | 0 RED_GREEN_OK, 1 그 외 |
+| `hvp_cite.py` | 값 하나의 출처·상태 보기(`get`), 보고서의 인용 검사와 출처 없는 숫자 찾기(`check`) | get 0/1, check 0 깨끗, 1 문제 |
 | `selftest.py` | 위 도구들의 known-answer 자체 시험(임시 저장소에서) | 0 전부 통과 |
 
 **처음 쓰는 환경에서는 자체 시험부터 돌린다.** 검사기를 믿기 전에 정답을 아는 입력으로 확인한다는 skill의 원칙을 도구 자신에게도 적용한다.
@@ -322,3 +324,47 @@ python3 $S/hvp_fixloop.py attempt --sid $SID --issue $I --change "<무엇을 바
 - 커밋: 5·6절(스테이지 점검, 스냅샷 검증). 근본 원인 하나당 커밋 하나다.
 - 닫기: `python3 $S/hvp_fixloop.py close --sid $SID --issue $I --result fixed|escalated|abandoned --note "<요약>"`.
 - 시도 기록은 세션 잠금 옆(`<git-common-dir>/hvp-sessions/$SID.fixlog.json`)에 있다. `hvp_session.py end`가 지우지 않지만 저장소에 커밋되지도 않는다. 남길 내용은 7b로 옮긴다.
+
+## 10. 보고와 인용
+
+SKILL.md 12단계의 절차다. 목적은 사용자가 에이전트의 말을 믿지 않고도 모든 숫자를 확인할 수 있게 하는 것이다.
+
+**값 하나 확인하기**
+
+```sh
+python3 $S/hvp_cite.py get results/wall.json /metrics/safety_factor/value
+```
+
+```
+VALUE    1.3241
+CITE     `ev:results/wall.json#/metrics/safety_factor/value`
+FILE     results/wall.json  sha256 3f9a…
+COMMIT   5ef2114… 2026-10-20 <커밋 제목>
+COMMAND  python3 tools/check_wall.py
+INPUT    OK      params/cam.json
+SEE      open results/wall.json, or: python3 -m json.tool results/wall.json
+REPRO    python3 tools/check_wall.py   then rerun this command and compare
+```
+
+- `INPUT STALE`이 보이면 그 값은 지금 설계의 값이 아닐 수 있다. 보고에 쓰기 전에 재생성한다(4절).
+- `COMMAND not recorded`이면 그 증거는 재현 방법을 스스로 말하지 못한다. 보고에 그 사실을 쓰고, 검사기에 `provenance`를 기록하는 작업을 제안한다(oracle-catalog 29절).
+- 사용자에게도 이 명령을 알려 준다. 에이전트가 옮긴 숫자를 사용자가 한 줄로 확인할 수 있다.
+
+**보고서 쓰기**
+
+- 숫자와 판정 뒤에 인용을 붙인다: ``1.32 `ev:results/wall.json#/metrics/safety_factor/value` ``. 표 칸 안에서도 같다.
+- 보이는 자릿수까지만 맞으면 된다(1.3241을 1.32로 쓰는 것은 일치). 반올림 이상으로 바꾸지 않는다.
+- 에이전트가 계산한 값은 인용 대신 근거 상태와 계산식을 쓴다(SKILL.md 12단계). `check`는 단위가 붙은 숫자 중 인용 없는 것을 UNCITED로 표시하므로, 계산값에는 계산의 입력이 되는 값의 인용을 같은 줄에 둔다.
+- 도구 출력은 원문 줄을 코드 블록으로 함께 둔다. 코드 블록 안은 `check`가 검사하지 않는다.
+- "직접 확인" 절: 증거 파일 목록, 재현 명령, 렌더 경로, `hvp_cite.py get` 사용 예.
+
+**보고서 검사**
+
+```sh
+python3 $S/hvp_cite.py check docs/verification/2026-10-22-report.md
+```
+
+- `MISMATCH`: 보고의 숫자가 증거와 다르다. 증거를 다시 읽고 고친다. 증거가 그 사이 재생성됐을 수 있다.
+- `MISSING`: 파일이나 포인터가 없다. 경로와 포인터를 고치거나, 증거가 저장소에 없다면 가져온다.
+- `UNCITED`: 출처 없는 숫자다. 인용을 붙이거나, 추정이면 근거 상태와 계산식을 쓴다. 정말 출처가 필요 없는 숫자(부품 수량, 문서 절 번호)만 남기고 `--allow-uncited`를 쓴다. 쓴 경우 보고에 그 사실을 적는다.
+- 채팅으로만 보고할 때도 같은 형식으로 쓴다. 저장소에 남지 않는 보고라도 사용자가 확인할 수 있어야 하기 때문이다.

@@ -253,6 +253,43 @@ def fix_cases(root):
     gl = subprocess.run(["git", "status", "--porcelain"], cwd=rg, capture_output=True, text=True).stdout
     wts = subprocess.run(["git", "worktree", "list"], cwd=rg, capture_output=True, text=True).stdout.strip().splitlines()
     case("redgreen: working tree and worktrees untouched", len(wts) == 1 and "src/cam.py" not in gl, gl + "\n".join(wts))
+
+    # ------------------------------------------------ cite
+    rc_ = new_repo(root, "repo-cite")
+    os.makedirs(os.path.join(rc_, "params"))
+    open(os.path.join(rc_, "params/cam.json"), "w").write('{"gap_mm": 0.6}\n')
+    write_json(os.path.join(rc_, "results/wall.json"), {
+        "status": "PASS_BELOW_TARGET", "inputs": {"params/cam.json": sha(os.path.join(rc_, "params/cam.json"))},
+        "provenance": {"command": "python3 tools/check_wall.py", "commit": "abc1234"},
+        "metrics": {"safety_factor": {"value": 1.3241, "limit": 1.0, "target": 1.5, "sense": "min"}}})
+    sh("git add -A && git commit -qm ev", rc_)
+    rc, out = run(["hvp_cite.py", "get", "results/wall.json", "/metrics/safety_factor/value"], rc_)
+    case("cite get: value with file, commit, command and input state",
+         rc == 0 and "VALUE    1.3241" in out and "COMMAND  python3 tools/check_wall.py" in out
+         and "INPUT    OK      params/cam.json" in out and "COMMIT" in out, out)
+    open(os.path.join(rc_, "params/cam.json"), "w").write('{"gap_mm": 0.7}\n')
+    rc, out = run(["hvp_cite.py", "get", "results/wall.json", "/metrics/safety_factor/value"], rc_)
+    case("cite get: changed input shown as STALE with a warning", "INPUT    STALE" in out and "WARNING" in out, out)
+    sh("git checkout -q -- params", rc_)
+    rep = os.path.join(rc_, "report.md")
+    open(rep, "w").write(
+        "# report\n"
+        "housing safety factor 1.32 `ev:results/wall.json#/metrics/safety_factor/value`\n"
+        "| wall | PASS_BELOW_TARGET `ev:results/wall.json#/status` |\n"
+        "SF 1.3241 PASS_BELOW_TARGET `ev:results/wall.json#/metrics/safety_factor/value` `ev:results/wall.json#/status`\n"
+        "```\nraw log 3.5 mm ignored inside code\n```\n"
+        "run took 4 min on v5\n")
+    rc, out = run(["hvp_cite.py", "check", "report.md"], rc_)
+    case("cite check: correct citations at shown precision, code blocks and durations ignored",
+         rc == 0 and "citations_ok=4 problems=0 uncited=0" in out, out)
+    open(rep, "a").write("min clearance is 0.21 mm so it is fine\n"
+                         "safety factor 1.45 `ev:results/wall.json#/metrics/safety_factor/value`\n"
+                         "pull-out 300 N `ev:results/insert.json#/metrics/n/value`\n"
+                         "target 1.5 `ev:results/wall.json#/metrics/safety_factor/nope`\n")
+    rc, out = run(["hvp_cite.py", "check", "report.md"], rc_)
+    case("cite check: uncited number, wrong number, missing file and bad pointer all reported",
+         rc == 1 and "UNCITED  line 9" in out and "MISMATCH line 10: report says 1.45" in out
+         and "MISSING  line 11" in out and "MISSING  line 12" in out, out)
     return base_rev
 
 

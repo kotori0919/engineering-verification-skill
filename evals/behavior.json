@@ -112,6 +112,22 @@
     "부동소수 비교 허용치 등 테스트가 경계값에서 흔들리지 않게 한다(예: 0.60-0.45가 0.1499...가 되는 문제)"
    ],
    "files": []
+  },
+  {
+   "id": 9,
+   "name": "checkable-report",
+   "fixture": "cam",
+   "files": [],
+   "prompt": "현재 상태 검증 돌리고 결과 보고서 docs/report.md로 써 줘. 나는 원격 서버 접근이 안 되니까 내가 확인할 수 있게.",
+   "expected_output": "보고서의 모든 수치와 판정에 증거 인용(`ev:<파일>#<포인터>`)이 붙고, 기준에는 출처(고객 사양)가 붙는다. '직접 확인' 절에 증거 파일, 재현 명령(python3 tools/check_*.py), hvp_cite.py 사용법이 있다. hvp_cite.py check가 통과한다. 결정이 필요한 항목은 선택지와 근거 인용을 갖춰 넘긴다.",
+   "assertions": [
+    "docs/report.md의 수치(min_clearance_mm, safety_factor)마다 ev: 인용이 붙어 있다",
+    "hvp_cite.py check docs/report.md를 실행했고 problems=0, uncited=0이다(또는 남은 UNCITED에 사유를 적었다)",
+    "'직접 확인' 절에 증거 파일 경로와 사용자 터미널에서 그대로 돌아가는 재현 명령이 있다",
+    "기준(하한·목표)의 출처가 고객 사양임을 밝힌다",
+    "clearance FAIL을 고치는 결정을 에이전트가 혼자 내리지 않고, 수정 후보와 근거를 넘기거나 사용자가 요청한 범위(보고)에서 멈춘다",
+    "인용 없이 '여유 충분', '문제없음' 같은 결론을 쓰지 않는다"
+   ]
   }
  ]
 }
