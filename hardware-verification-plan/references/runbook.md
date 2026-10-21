@@ -327,44 +327,61 @@ python3 $S/hvp_fixloop.py attempt --sid $SID --issue $I --change "<무엇을 바
 
 ## 10. 보고와 인용
 
-SKILL.md 12단계의 절차다. 목적은 사용자가 에이전트의 말을 믿지 않고도 모든 숫자를 확인할 수 있게 하는 것이다.
+SKILL.md 12단계의 절차다. 목적은 사용자가 에이전트의 말을 믿지 않고도 모든 숫자의 뜻과 출처를 확인하고, 필요하면 직접 다시 만들어 볼 수 있게 하는 것이다.
 
 **값 하나 확인하기**
 
 ```sh
-python3 $S/hvp_cite.py get results/wall.json /metrics/safety_factor/value
+python3 $S/hvp_cite.py get results/wall.json /metrics/safety_factor/value [--rerun]
 ```
 
 ```
-VALUE    1.3241
+VALUE    2.125
+CRITERIA limit 1.0, target 1.5, sense min
+SCOPE    "housing wall, static closing load, room temperature"
+ASSUMPTI ["wall left = envelope - 2*gap", ...]
+LIMITATI ["no fatigue", "no creep", "no print orientation effect"]
+CRIT_SRC {"safety_factor": "customer spec (README)"}
 CITE     `ev:results/wall.json#/metrics/safety_factor/value`
-FILE     results/wall.json  sha256 3f9a…
-COMMIT   5ef2114… 2026-10-20 <커밋 제목>
+FILE     results/wall.json  sha256 …
+COMMIT   <sha> <날짜> <커밋 제목>
 COMMAND  python3 tools/check_wall.py
 INPUT    OK      params/cam.json
-SEE      open results/wall.json, or: python3 -m json.tool results/wall.json
-REPRO    python3 tools/check_wall.py   then rerun this command and compare
+RERUN    REPRODUCED (file 2.125, regenerated 2.125)
 ```
 
+- 맨 위 세 줄(SCOPE, ASSUMPTIONS, LIMITATIONS)이 그 숫자의 뜻이다. "not recorded"이면 숫자는 있어도 뜻을 알 수 없다. 검사기에 그 필드를 기록하는 작업을 먼저 제안한다(oracle-catalog 29절).
 - `INPUT STALE`이 보이면 그 값은 지금 설계의 값이 아닐 수 있다. 보고에 쓰기 전에 재생성한다(4절).
-- `COMMAND not recorded`이면 그 증거는 재현 방법을 스스로 말하지 못한다. 보고에 그 사실을 쓰고, 검사기에 `provenance`를 기록하는 작업을 제안한다(oracle-catalog 29절).
+- `RERUN NOT_REPRODUCED`면 파일의 값을 기록된 명령이 만들지 않았다. 손으로 고쳤거나, 코드가 바뀌었거나, 입력이 빠졌다. 그 값은 보고에 쓰지 않는다. 미추적 입력이 필요하면 `--inputs`로 넘긴다.
 - 사용자에게도 이 명령을 알려 준다. 에이전트가 옮긴 숫자를 사용자가 한 줄로 확인할 수 있다.
 
 **보고서 쓰기**
 
-- 숫자와 판정 뒤에 인용을 붙인다: ``1.32 `ev:results/wall.json#/metrics/safety_factor/value` ``. 표 칸 안에서도 같다.
-- 보이는 자릿수까지만 맞으면 된다(1.3241을 1.32로 쓰는 것은 일치). 반올림 이상으로 바꾸지 않는다.
-- 에이전트가 계산한 값은 인용 대신 근거 상태와 계산식을 쓴다(SKILL.md 12단계). `check`는 단위가 붙은 숫자 중 인용 없는 것을 UNCITED로 표시하므로, 계산값에는 계산의 입력이 되는 값의 인용을 같은 줄에 둔다.
-- 도구 출력은 원문 줄을 코드 블록으로 함께 둔다. 코드 블록 안은 `check`가 검사하지 않는다.
+- 숫자에는 사람이 읽는 맥락 한 줄을 붙이고, 출처를 인용한다. 인용은 세 형식이다.
+  - 인라인: ``하우징 벽 SF 1.32(정적 닫힘 하중, 피로 미검토) `ev:results/wall.json#/metrics/safety_factor/value` ``
+  - 각주(읽기 편한 형식): `SF 1.32[^sf]`와 문서 끝의 `[^sf]: ev:results/wall.json#/metrics/safety_factor/value`
+  - 사양·BOM 줄: ``M3x10 볼트 4개 `ev:bom.csv#L3` ``. 쓴 숫자가 그 줄에 있어야 한다.
+- 기준을 같은 문장에 써도 된다(`SF 1.32 (목표 1.5) `ev:…``). 검사는 문장 안의 숫자 중 하나가 인용 값과 같은지를 본다.
+- 보이는 자릿수까지만 맞으면 된다(1.3241을 1.32로 쓰는 것은 일치).
+- 에이전트가 계산한 값은 근거 상태와 계산식을 쓰고, 계산 입력의 인용을 같은 줄에 둔다.
+- 도구 출력은 원문 줄을 코드 블록으로 함께 둔다. 코드 블록 안과 제목 줄은 검사하지 않는다.
 - "직접 확인" 절: 증거 파일 목록, 재현 명령, 렌더 경로, `hvp_cite.py get` 사용 예.
 
 **보고서 검사**
 
 ```sh
-python3 $S/hvp_cite.py check docs/verification/2026-10-22-report.md
+python3 $S/hvp_cite.py check docs/verification/2026-10-22-report.md --rerun
 ```
 
-- `MISMATCH`: 보고의 숫자가 증거와 다르다. 증거를 다시 읽고 고친다. 증거가 그 사이 재생성됐을 수 있다.
-- `MISSING`: 파일이나 포인터가 없다. 경로와 포인터를 고치거나, 증거가 저장소에 없다면 가져온다.
-- `UNCITED`: 출처 없는 숫자다. 인용을 붙이거나, 추정이면 근거 상태와 계산식을 쓴다. 정말 출처가 필요 없는 숫자(부품 수량, 문서 절 번호)만 남기고 `--allow-uncited`를 쓴다. 쓴 경우 보고에 그 사실을 적는다.
-- 채팅으로만 보고할 때도 같은 형식으로 쓴다. 저장소에 남지 않는 보고라도 사용자가 확인할 수 있어야 하기 때문이다.
+| 표시 | 뜻 | 할 일 |
+| --- | --- | --- |
+| `MISMATCH` | 문장의 어떤 숫자도 인용 값과 맞지 않음, 또는 인용한 상태어가 문장에 없음 | 증거를 다시 읽고 고친다 |
+| `MISSING` | 파일, 포인터, 줄, 각주 정의가 없음 | 경로를 고치거나 증거를 저장소로 가져온다 |
+| `NO_CONTEXT` | 인용한 증거에 범위·가정·한계가 없음 | 검사기가 기록하게 하거나, 보고에 "맥락 미기록"을 밝힌다 |
+| `UNCITED` | 단위가 붙은 숫자, 여유·비율·계수·확률 숫자에 출처 없음 | 인용하거나 추정으로 표시 |
+| `UNCITED_JUDGMENT` | "충분", "문제없음", "safe" 같은 판단에 출처 없음 | 판단의 근거를 인용하거나 문장을 상태와 근거로 바꾼다 |
+| `NOT_REPRODUCED` | 기록된 명령이 다른 값을 만듦 | 재생성하고 보고를 고친다 |
+
+- 정말 출처가 필요 없는 숫자만 남기고 `--allow-uncited`를 쓴다. 쓴 경우 보고에 그 사실을 적는다.
+- 인용 검사가 통과했다는 것은 보고와 증거 파일이 일치한다는 뜻이다. 증거 자체가 맞는지는 `--rerun`의 REPRODUCED와 검사기 known-answer 시험으로 본다. 보고에서 둘을 섞어 쓰지 않는다.
+- 채팅으로만 보고할 때도 같은 형식으로 쓴다.

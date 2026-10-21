@@ -33,7 +33,7 @@
 
 ## 인용과 "직접 확인" (모든 양식 공통)
 
-- 양식의 숫자·판정 칸은 모두 인용을 붙인다: ``1.32 `ev:<파일>#<포인터>` ``. 에이전트가 계산한 값은 `(INFERRED: <식>)`을 붙인다.
+- 양식의 숫자·판정 칸은 모두 맥락 한 줄과 인용을 붙인다: ``1.32(정적 닫힘 하중, 피로 미검토) `ev:<파일>#<포인터>` `` 또는 각주 `1.32[^sf]`. 사양·BOM에서 온 숫자는 줄 인용(`ev:bom.csv#L3`). 에이전트가 계산한 값은 `(INFERRED: <식>)`을 붙인다.
 - 기준(하한·목표)에는 출처를 붙인다: 사용자, 고객 사양, 규격, "(제안)".
 - 보고 끝에 아래 절을 둔다.
 
@@ -45,7 +45,7 @@
 | <하우징 안전율> | `results/wall.json` | `python3 tools/check_wall.py` | `renders/wall_stress.png` |
 
 값 하나의 출처와 상태: `python3 <skill>/scripts/hvp_cite.py get <파일> <포인터>`
-이 보고서의 인용 검사: `python3 <skill>/scripts/hvp_cite.py check <이 파일>` → <결과 줄>
+이 보고서의 인용 검사: `python3 <skill>/scripts/hvp_cite.py check <이 파일> --rerun` → <SUMMARY 줄 원문>
 사용자 결정이 필요한 항목: <없음 / 목록과 각 선택지의 근거 인용>
 ```
 

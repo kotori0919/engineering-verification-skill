@@ -280,6 +280,9 @@
    "inputs": {"source/build_bracket.py": "<sha256>", "params/bracket.json": "<sha256>"},
    "metrics": {"safety_factor": {"value": 1.32, "limit": 1.0, "target": 1.5, "sense": "min"},
                "deflection_mm": {"value": 0.21, "limit": 0.5, "target": 0.3, "sense": "max"}},
+   "scope": "bracket arm, closing load case 40 N static, 23 °C",
+   "assumptions": ["linear elastic", "PETG E = 2.0 GPa (datasheet)", "fixed at two M3 bosses"],
+   "limitations": ["no fatigue", "no creep", "no print-orientation knockdown"],
    "criteria_source": {"safety_factor": "customer spec rev C §4.2", "deflection_mm": "(제안)"},
    "provenance": {"command": "python3 tools/check_bracket.py", "commit": "<sha>", "tool_sha256": "<sha256>"}}
   ```
@@ -289,6 +292,7 @@
   - 기록된 `status`가 지표에서 유도한 상태보다 좋으면 INCONSISTENT로 잡힌다. 자기 보고 PASS를 걸러 내는 장치다.
   - `layer`는 L0–L5 문자열이다. `hvp_impact.py`가 재실행 순서를 정할 때 쓴다.
   - `inputs`는 `hvp_stale.py`가 인식하는 해시 기록 형식이다(runbook 4절).
+  - `scope`, `assumptions`, `limitations`는 이 숫자가 무엇을 뜻하는지 적는 필수 필드다. scope는 무엇을 어떤 조건에서 쟀는가(부품, 하중 경우, 온도, 행정 구간), assumptions는 모델 가정(선형 탄성, 강체, 재료값과 출처), limitations는 이 검사가 보지 않는 것(피로, 크리프, 공차, 적층 방향)이다. 목록 항목(`checks[]`)에 두면 파일 수준 값보다 우선한다. 없으면 `hvp_cite.py check`가 NO_CONTEXT로 잡는다.
   - `provenance`는 사용자가 이 값을 다시 만들 수 있게 하는 기록이다. `command`는 저장소 루트에서 그대로 돌아가는 명령, `commit`은 실행한 커밋, `tool_sha256`은 검사기 파일 해시다. `hvp_cite.py get`이 이것을 보여 준다.
   - `criteria_source`는 하한·목표가 어디서 왔는지(사용자, 고객 사양, 규격, "(제안)")를 적는다. 기준의 주인이 보이게 하기 위해서다.
 - **기존 저장소에 맞추기**: 저장소의 증거 형식이 다르면, 증거를 쓰는 검사기에 `metrics`와 `layer`를 더하는 작업 패키지를 먼저 낸다(보통 검사기마다 몇 줄). 그 전까지 `hvp_verdicts.py`는 상태 비교만 할 수 있다. 이 한계를 보고에 적는다.
