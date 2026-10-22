@@ -8,7 +8,7 @@
 | --- | --- |
 | `behavior.json` | 행동 시나리오 9개. skill-creator `evals.json` 형식에 `fixture` 필드를 더했다 |
 | `trigger.json` | 발동 평가 20문항. 발동해야 할 것 10, 비슷하지만 발동하면 안 될 것 10 |
-| `fixtures/make_fixture.py` | 시나리오별 모의 저장소 생성기(`--list`로 목록) |
+| `fixtures/make_fixture.py` | 시나리오별 모의 저장소 생성기(`--list`로 목록). `brief`는 판단 자료 예시용 |
 
 시나리오가 시험하는 규칙:
 

@@ -15,6 +15,7 @@ SKILL.md 1·6·7·8·9단계의 실행 절차. 반복되는 점검은 `scripts/`
 8. 제작 착수 준비 절차
 9. 설계 수정 루프
 10. 보고와 인용
+11. 판단 자료
 
 ---
 
@@ -39,6 +40,7 @@ SKILL.md 1·6·7·8·9단계의 실행 절차. 반복되는 점검은 `scripts/`
 | `hvp_consensus.py` | 독립 방법들의 합의(E_n), 보수 경계 판정 | 0 합의·통과, 1 그 외 |
 | `hvp_fatigue.py` | 레인플로, 평균응력 보정·Miner 손상, Paris 균열 성장, LEFM K 검사 | 0 통과, 1 미달 |
 | `hvp_flow.py` | 레이놀즈 수, 마찰 계수(Colebrook·Haaland 대조), 압력 손실 | 0 통과, 1 초과 |
+| `hvp_brief.py` | 증거 전체로 판단 자료(HTML + 인용이 붙은 Markdown) 생성 | 0 생성 |
 | `hvp_cite.py` | 값 하나의 출처·상태 보기(`get`), 보고서의 인용 검사와 출처 없는 숫자 찾기(`check`) | get 0/1, check 0 깨끗, 1 문제 |
 | `selftest.py` | 위 도구들의 known-answer 자체 시험(임시 저장소에서) | 0 전부 통과 |
 
@@ -389,3 +391,24 @@ python3 $S/hvp_cite.py check docs/verification/2026-10-22-report.md --rerun
 - 정말 출처가 필요 없는 숫자만 남기고 `--allow-uncited`를 쓴다. 쓴 경우 보고에 그 사실을 적는다.
 - 인용 검사가 통과했다는 것은 보고와 증거 파일이 일치한다는 뜻이다. 증거 자체가 맞는지는 `--rerun`의 REPRODUCED와 검사기 known-answer 시험으로 본다. 보고에서 둘을 섞어 쓰지 않는다.
 - 채팅으로만 보고할 때도 같은 형식으로 쓴다.
+
+## 11. 판단 자료
+
+SKILL.md 12단계의 "판단 자료를 만들어 보여 준다"의 절차다.
+
+```sh
+python3 $S/hvp_brief.py --title "<프로젝트 이름>" [--glob 'results/**/*.json'] [--decisions verification/decisions.json]
+python3 $S/hvp_cite.py check docs/verification/brief.md --rerun     # 판단 자료 자체 검사
+```
+
+- 출력은 `docs/verification/brief.html`(읽는 판)과 `brief.md`(인용이 붙은 판)다. `--out-dir`로 바꿀 수 있다. 커밋할지는 사용자가 정한다. 커밋하지 않으면 `.gitignore`에 넣기를 제안한다.
+- 터미널 출력의 "needing attention" 목록이 판단 자료의 "먼저 볼 것"과 같다. 사용자에게는 이 목록과 HTML 경로를 준다.
+- 판단 자료를 읽는 순서:
+  1. 먼저 볼 것
+  2. 결정 대기
+  3. 커버리지의 "검사 없음" 칸
+  4. 검사별 카드의 "보지 않은 것"과 입력 상태
+  5. 설계 입력 표: 어떤 파라미터가 어떤 판정을 움직이는지
+- 판정 표시는 기록된 status와 지표에서 유도한 status 중 더 나쁜 쪽이다. 둘이 다르면 INCONSISTENT로 표시하고 기록된 값도 함께 보여 준다. 예를 들어 불확도를 넣으면 기록된 PASS가 목표 미달로 바뀔 수 있다.
+- 판단 자료의 인용 검사에서 나오는 NO_CONTEXT, NO_COMMAND는 판단 자료의 결함이 아니라 증거의 빈 곳이다. 그 검사기에 맥락·생성 명령을 기록하는 작업을 제안한다.
+- 결정 파일의 결정 문구에 있는 숫자는 근거가 아니다. 근거는 `evidence`의 `ev:` 참조다. 문구 안의 추정치에는 "(추정)"을 붙인다. 인용 검사는 그것을 ESTIMATE로 따로 센다.

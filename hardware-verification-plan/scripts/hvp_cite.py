@@ -16,6 +16,8 @@
                          cannot tell what the number measures
           UNCITED        a number with a unit, or a margin/ratio/factor number, with no citation
           UNCITED_JUDGMENT  "sufficient", "no problem", "충분", "문제없음" ... with no citation
+          ESTIMATE       a number or judgment with no citation but labelled INFERRED / PROPOSED /
+                         추정 / (제안): listed so the reader sees every estimate; not a failure
           NOT_REPRODUCED (--rerun) the recorded command regenerates a different value
 
 Citation forms
@@ -52,6 +54,7 @@ RATIO_NUM = re.compile(r"(안전율|안전계수|여유|비율|계수|효율|확
 JUDGE = re.compile(r"(충분|문제\s?없|괜찮|안전하|여유\s?있|만족|이상\s?없|sufficient|adequate|no problem|"
                    r"\bsafe\b|\bfine\b|looks good|\bOK\b)", re.I)
 CONTEXT_KEYS = ("scope", "assumptions", "limitations")
+ESTIMATE = re.compile(r"(INFERRED|PROPOSED|추정|\(제안\))")
 
 
 def pointer(doc, ptr):
@@ -284,17 +287,21 @@ def cmd_check(a, top):
                 if not any(shown_matches(x, val) for x in nums):
                     problems.append("MISMATCH line %d: report says %s, %s#%s is %r" % (i, "/".join(nums), rel, ptr, val))
                     continue
-                if not context_for(doc, ptr) and not a.allow_no_context:
+                is_evidence = bool(C.verdict_records(doc, rel))   # design inputs (params) are not evidence
+                if is_evidence and not context_for(doc, ptr) and not a.allow_no_context:
                     warn.append("NO_CONTEXT line %d: %s has no scope/assumptions/limitations" % (i, rel))
                 ok += 1
-                rerun_want.setdefault(rel, set()).add(ptr)
+                if is_evidence:
+                    rerun_want.setdefault(rel, set()).add(ptr)
             else:
                 if str(val) in seg:
                     ok += 1
                 else:
                     problems.append("MISMATCH line %d: %s#%s is %r, not stated before the citation" % (i, rel, ptr, val))
         if not cites:
-            if UNIT_NUM.search(line) or RATIO_NUM.search(line):
+            if (UNIT_NUM.search(line) or RATIO_NUM.search(line) or JUDGE.search(line)) and ESTIMATE.search(line):
+                warn.append("ESTIMATE line %d: %s" % (i, st[:140]))
+            elif UNIT_NUM.search(line) or RATIO_NUM.search(line):
                 warn.append("UNCITED  line %d: %s" % (i, st[:140]))
             elif JUDGE.search(line):
                 warn.append("UNCITED_JUDGMENT line %d: %s" % (i, st[:140]))
@@ -319,9 +326,10 @@ def cmd_check(a, top):
         if x.startswith("REPRODUCED"):
             print(x)
     uncited = [w for w in warn if w.startswith("UNCITED")]
+    estimates = [w for w in warn if w.startswith("ESTIMATE")]
     noctx = [w for w in warn if w.startswith("NO_CONTEXT")]
-    print("SUMMARY citations_ok=%d problems=%d uncited=%d no_context=%d%s" % (
-        ok, len(problems), len(uncited), len(noctx),
+    print("SUMMARY citations_ok=%d problems=%d uncited=%d no_context=%d estimates=%d%s" % (
+        ok, len(problems), len(uncited), len(noctx), len(estimates),
         " reproduced=%d/%d" % (sum(r.startswith("REPRODUCED") for r in reruns), len(reruns)) if a.rerun else ""))
     if uncited and not a.allow_uncited:
         print("NOTE     cite each number to its evidence or source line (ev:<file>#L<n> for specs, BOMs),"

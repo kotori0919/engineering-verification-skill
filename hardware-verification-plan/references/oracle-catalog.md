@@ -303,6 +303,21 @@
   - `scope`, `assumptions`, `limitations`는 이 숫자가 무엇을 뜻하는지 적는 필수 필드다. scope는 무엇을 어떤 조건에서 쟀는가(부품, 하중 경우, 온도, 행정 구간), assumptions는 모델 가정(선형 탄성, 강체, 재료값과 출처), limitations는 이 검사가 보지 않는 것(피로, 크리프, 공차, 적층 방향)이다. 목록 항목(`checks[]`)에 두면 파일 수준 값보다 우선한다. 없으면 `hvp_cite.py check`가 NO_CONTEXT로 잡는다.
   - `provenance`는 사용자가 이 값을 다시 만들 수 있게 하는 기록이다. `command`는 저장소 루트에서 그대로 돌아가는 명령, `commit`은 실행한 커밋, `tool_sha256`은 검사기 파일 해시다. `hvp_cite.py get`이 이것을 보여 준다.
   - `criteria_source`는 하한·목표가 어디서 왔는지(사용자, 고객 사양, 규격, "(제안)")를 적는다. 기준의 주인이 보이게 하기 위해서다.
+  - 판단 자료(`hvp_brief.py`)를 위한 선택 필드:
+    - `part`: 부품·하위 시스템 이름. 커버리지 표의 행이 된다.
+    - `question`: `physical` / `assembly` / `motion` / `common`. 커버리지 표의 열이 된다.
+    - `method`: 폐형식, FE, 시험 등 판정 방법.
+    - `sensitivity`: `[{"input": "params/cam.json#/gap_mm", "metric": "min_clearance_mm", "slope": 1.0, "source": "..."}]`. 설계 입력이 지표를 얼마나 움직이는지 적는다. 스윕 결과나 검사기 식에서 온다.
+- **결정 파일** `verification/decisions.json`: 에이전트가 사용자에게 넘기는 결정의 목록이다.
+
+  ```json
+  [{"id": "D-1", "question": "캠 간섭을 어떻게 풀 것인가",
+    "options": [{"name": "A: gap 0.60", "effect": "...", "cost": "파라미터 1줄", "reversible": "쉬움",
+                 "evidence": ["ev:results/wall.json#/sensitivity/0/slope"]}],
+    "recommendation": "A", "reason": "...", "blocks": ["clearance 수정"], "status": "open"}]
+  ```
+
+  `evidence`는 `ev:` 참조만 쓴다. 판단 자료가 각 참조의 현재 값을 읽어 보여 주고, 찾을 수 없는 참조는 그렇게 표시한다. 결정이 나면 `status`를 `decided: <선택>`으로 바꾸고 결정한 사람을 적는다.
 - **기존 저장소에 맞추기**: 저장소의 증거 형식이 다르면, 증거를 쓰는 검사기에 `metrics`와 `layer`를 더하는 작업 패키지를 먼저 낸다(보통 검사기마다 몇 줄). 그 전까지 `hvp_verdicts.py`는 상태 비교만 할 수 있다. 이 한계를 보고에 적는다.
 - **known-answer**: `scripts/selftest.py`의 verdicts 사례(FIXED, REGRESSED, LOST, MARGIN_DROP, CRITERIA_CHANGED, INCONSISTENT).
 

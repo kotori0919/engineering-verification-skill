@@ -2,7 +2,7 @@
 
 (skill 이름은 `hardware-verification-plan`이다. 설치 경로와 skill 이름은 그대로 쓴다.)
 
-실물 엔지니어링 프로젝트(CAD 기구, 조립체, 공정 기계, 3D 출력·가공 부품, 펌웨어·제어)를 AI 에이전트가 검증·테스트·수정할 수 있게 하는 Claude skill이다. 방법론 문서와 함께, 검증 절차와 검증 결과에 근거한 설계 수정 루프를 실제로 돌리는 도구 16종, 그 도구의 자체 시험, 에이전트 행동을 보는 평가 세트를 담고 있다.
+실물 엔지니어링 프로젝트(CAD 기구, 조립체, 공정 기계, 3D 출력·가공 부품, 펌웨어·제어)를 AI 에이전트가 검증·테스트·수정할 수 있게 하는 Claude skill이다. 방법론 문서와 함께, 검증 절차와 검증 결과에 근거한 설계 수정 루프를 실제로 돌리는 도구 17종, 그 도구의 자체 시험, 에이전트 행동을 보는 평가 세트를 담고 있다.
 
 ## 무엇을 하는가
 
@@ -45,6 +45,26 @@
 - **루프 제어**: `hvp_fixloop.py`가 시도 예산, 같은 값 반복, 두 검사가 번갈아 깨지는 결합, 진동, 정체를 감지해 멈춘다.
 - **실패 유형별 수정 패턴**: 간섭, 조립 불가, 공차, 강도, 체결, 이동도, 통로, 열, 제어, 제작성 12종의 작은 변경부터의 순서, 재검증 오라클, 흔한 부작용을 담았다.
 
+## 판단 자료
+
+검증이 끝나면 `hvp_brief.py`가 저장소의 증거 파일 전체에서 판단 자료를 만든다. 에이전트가 요약을 쓰지 않으므로 숫자를 옮기다 틀릴 여지가 없다.
+
+- **먼저 볼 것**: FAIL, 판정 보류, 기록된 status와 지표의 불일치, 불확도 안의 통과, 낡은 입력, 맥락·불확도·생성 명령 누락
+- **결정 대기**: 선택지와 근거의 현재 값, 비용, 되돌리기, 추천, 결정 전에 멈춘 작업
+- **부품 × 세 질문 커버리지**: 빈 칸은 PASS가 아니라 "검사 없음"으로 표시
+- **검사별 카드**: 값·하한·목표·불확도와 위치 막대, 측정 범위·가정·보지 않은 것, 기준 출처, 입력 상태, 감도, 생성 명령, 직접 확인 명령
+- **설계 입력**: 파라미터의 현재 값과 그 값에 기대는 검사
+- **기타**: 독립 방법의 합의, 이 자료가 말하지 못하는 것
+
+`brief.html`은 브라우저로 읽는 판이다. 네트워크 없이 열리고, 밝은·어두운 테마와 휴대폰 폭을 지원한다. `brief.md`는 같은 내용에 숫자마다 `ev:` 인용을 붙인 판이라 `hvp_cite.py check --rerun`으로 판단 자료 자체를 검사할 수 있다.
+
+예시 만들기:
+
+```sh
+python3 evals/fixtures/make_fixture.py brief /tmp/brief-demo
+cd /tmp/brief-demo && python3 <skill>/scripts/hvp_brief.py --title demo && open docs/verification/brief.html
+```
+
 ## 구성
 
 ```
@@ -67,13 +87,14 @@ hardware-verification-plan/
     ├── hvp_verdicts.py          수정 전후 판정 비교(FIXED, REGRESSED, LOST, MARGIN_DROP, CRITERIA_CHANGED)
     ├── hvp_fixloop.py           이슈별 시도 기록, 예산·반복·결합·진동·정체 감지
     ├── hvp_redgreen.py          회귀 시험이 수정을 되돌리면 실패하는지 확인
+    ├── hvp_brief.py             판단 자료: 증거 전체를 사람이 판단할 수 있게 정리(HTML + 인용 Markdown)
     ├── hvp_cite.py              숫자 하나의 뜻·출처·재현 여부, 보고서 인용 검사
     ├── hvp_gci.py               메시 수렴(관측 차수, 외삽값, GCI)
     ├── hvp_consensus.py         독립 방법들의 합의(E_n)와 보수 경계 판정
     ├── hvp_fatigue.py           레인플로, 평균응력·Miner 피로 손상, Paris 균열 성장, LEFM
     ├── hvp_flow.py              배관·유로 압력 손실(층류·난류·천이)
     ├── hvp_common.py            공용 함수
-    └── selftest.py              위 도구들의 known-answer 자체 시험(84건)
+    └── selftest.py              위 도구들의 known-answer 자체 시험(90건)
 
 evals/                           (skill 패키지 밖) 행동 시나리오 9개, 발동 평가 20문항, 모의 저장소 생성기, 실행 결과(`evals/results/`)
 ```
@@ -101,7 +122,7 @@ zip -r hardware-verification-plan.skill hardware-verification-plan -x '*/__pycac
 설치한 환경에서 도구 자체가 맞게 동작하는지 먼저 확인한다. 검사기를 믿기 전에 정답을 아는 입력으로 시험한다는 skill의 원칙을 도구에도 적용한 것이다.
 
 ```sh
-python3 hardware-verification-plan/scripts/selftest.py      # SELFTEST 84/84 passed
+python3 hardware-verification-plan/scripts/selftest.py      # SELFTEST 90/90 passed
 ```
 
 ## 사용 예
@@ -160,12 +181,13 @@ python3 $S/hvp_fixloop.py show --sid agent-1 --issue I-1 --md           # 시도
 | v6 | 사용자가 개발 주체라는 원칙: 숫자마다 출처 인용, 직접 확인 절, 결정 넘기기, `hvp_cite.py`, 증거의 생성 명령·기준 출처 기록 |
 | v6.1 | 숫자의 뜻(범위·가정·한계) 필수, 기록된 명령으로 재실행 대조, 인용 검사 휴리스틱 수정 |
 | v7 | 불확도 반영 판정(INDETERMINATE), GCI, 스윕 경계 이분, 복합 검증, 피로·유체·파괴·진동·크리프, 평가 시나리오 9 실행 |
+| v7.1 | 판단 자료(`hvp_brief.py`): 먼저 볼 것, 결정 대기, 커버리지, 검사별 카드, 설계 입력, 합의를 증거에서 직접 생성 |
 
 자세한 내용은 [CHANGELOG.md](CHANGELOG.md).
 
 ## 검증 상태
 
-- `selftest.py` 84/84 통과: Linux, Python 3.13, git 2.43. 수정 루프 도구는 도구 결함 6종을 일부러 심어 시험이 그 결함을 잡는지 확인했고, 모의 저장소에서 runbook 9절 순서를 처음부터 끝까지 실행했다.
+- `selftest.py` 90/90 통과: Linux, Python 3.13, git 2.43. 수정 루프 도구는 도구 결함 6종을 일부러 심어 시험이 그 결함을 잡는지 확인했고, 모의 저장소에서 runbook 9절 순서를 처음부터 끝까지 실행했다.
 - 시험하지 못한 것: macOS의 `lsof` 경로, FreeCAD 헤드리스 드라이버, nix 환경과 실제 저장소의 pre-push 훅. 해당 환경에서 `selftest.py`를 먼저 돌린다.
 
 - 행동 평가는 시나리오 9만 skill 있음·없음 각 1회 실행했다. 결과와 채점 원문은 `evals/results/2026-10-22-scenario9/`에 있다. skill 쪽이 인용·재현 검사를 통과했고(36개 인용, 재현 7/7), 내용의 핵심은 기준선도 해냈다. 비용은 토큰 약 2.5배였다. 나머지 시나리오와 발동 평가는 아직 실행하지 않았다.

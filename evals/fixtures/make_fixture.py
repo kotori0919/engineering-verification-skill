@@ -19,7 +19,7 @@ h = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
 p = json.load(open("params/cam.json"))
 c = round(p["gap_mm"] - 0.45, 4)            # cam lobe protrudes 0.45 mm into the nominal gap
 st = "FAIL" if c < 0 else ("PASS_BELOW_TARGET" if c < 0.15 else "PASS")
-json.dump({"layer": "L2", "question": "assembly", "inputs": {"params/cam.json": h("params/cam.json")},
+json.dump({"layer": "L2", "question": "assembly", "part": "cam lobe / housing", "inputs": {"params/cam.json": h("params/cam.json")},
            "metrics": {"min_clearance_mm": {"value": c, "limit": 0.0, "target": 0.15, "sense": "min"}},
            "scope": "cam lobe vs housing, full rotation, nominal geometry",
            "assumptions": ["rigid parts", "lobe protrusion 0.45 mm from the cam drawing"],
@@ -36,7 +36,7 @@ p = json.load(open("params/cam.json"))
 t = p["envelope_mm"] - 2 * p["gap_mm"]      # housing wall left inside a fixed envelope
 sf = round(t / %(k)s, 4)
 st = "FAIL" if sf < 1.0 else ("PASS_BELOW_TARGET" if sf < 1.5 else "PASS")
-json.dump({"layer": "L3", "question": "physical", "inputs": {"params/cam.json": h("params/cam.json")},
+json.dump({"layer": "L3", "question": "physical", "part": "housing", "inputs": {"params/cam.json": h("params/cam.json")},
            "metrics": {"safety_factor": {"value": sf, "limit": 1.0, "target": 1.5, "sense": "min"},
                        "wall_mm": {"value": round(t, 4), "limit": 0.8, "sense": "min"}},
            "scope": "housing wall, static closing load, room temperature",
@@ -147,6 +147,56 @@ def scenario_bom(root):
       "P3,bearing 608ZZ,2,\nP4,spring,1,\n")
     for n in ("cam", "housing"):
         w(root, "cad/%s.step" % n, "ISO-10303-21; mock %s\n" % n)
+
+
+def scenario_brief(root):
+    """Sample for the decision brief: coupled trade-off, uncertainties, sensitivity, two
+    independent methods, an open decision, and a check with no recorded context."""
+    base(root, gap=0.30, envelope=3.8, k=2.0)
+    # the checkers themselves record uncertainty and sensitivity (so a rerun reproduces them)
+    for rel, name, u, slope in (("tools/check_clearance.py", "min_clearance_mm", 0.03, 1.0),
+                                ("tools/check_wall.py", "safety_factor", 0.12, -1.0)):
+        src = open(os.path.join(root, rel)).read()
+        src = src.replace('"sense": "min"}', '"sense": "min", "uncertainty": %s}' % u, 1)
+        src = src.replace('"status": st}', '"sensitivity": [{"input": "params/cam.json#/gap_mm", "metric": "%s", '
+                          '"slope": %s, "source": "linear in gap (checker formula)"}], "status": st}' % (name, slope), 1)
+        w(root, rel, src)
+    run_checks(root)
+    h = hashlib.sha256(open(os.path.join(root, "params/cam.json"), "rb").read()).hexdigest()
+    for rel, method, v, u, cmd in (("results/wall_fe.json", "FE (CalculiX, 3 meshes, GCI 1.8 %)", 1.52, 0.10, "python3 tools/fe_wall.py"),):
+        w(root, rel, json.dumps({"status": "PASS", "layer": "L3", "question": "physical", "part": "housing",
+                                 "method": method, "inputs": {"params/cam.json": h},
+                                 "scope": "housing wall, same load case as results/wall.json",
+                                 "assumptions": ["linear elastic", "fixed at the two mounting bosses"],
+                                 "limitations": ["no fatigue", "no print orientation effect"],
+                                 "criteria_source": {"safety_factor": "customer spec (README)"},
+                                 "provenance": {"command": cmd},
+                                 "metrics": {"safety_factor": {"value": v, "limit": 1.0, "target": 1.5, "sense": "min",
+                                                               "uncertainty": u}}}, indent=1) + "\n")
+    w(root, "results/consensus_wall.json", json.dumps({
+        "status": "BLOCKED", "layer": "L3", "question": "physical", "part": "housing",
+        "scope": "agreement of 2 independent methods on one quantity",
+        "assumptions": ["stated U are expanded (about 95 %) uncertainties"],
+        "limitations": ["agreement does not prove a shared assumption is right"],
+        "provenance": {"command": "python3 hvp_consensus.py --q ev:results/wall.json#/metrics/safety_factor/value "
+                                  "--q ev:results/wall_fe.json#/metrics/safety_factor/value --out results/consensus_wall.json"},
+        "methods": [{"method": "closed form", "value": 1.6, "U": 0.12}, {"method": "FE", "value": 1.52, "U": 0.10}],
+        "pairs": [{"a": "closed form", "b": "FE", "En": 0.5121, "agree": True}]}, indent=1) + "\n")
+    w(root, "results/insert.json", json.dumps({"status": "PASS", "layer": "L3", "part": "insert boss",
+                                                "metrics": {"pullout_N": {"value": 410.0, "limit": 250.0, "target": 375.0}}},
+                                               indent=1) + "\n")
+    w(root, "verification/decisions.json", json.dumps([{
+        "id": "D-1", "question": "캠 간섭을 어떻게 풀 것인가 (gap만으로는 두 목표를 동시에 못 맞춤)",
+        "options": [
+            {"name": "A: gap 0.60", "effect": "clearance 목표 충족, 벽 SF 1.30으로 목표 미달",
+             "cost": "파라미터 1줄", "reversible": "쉬움",
+             "evidence": ["ev:results/wall.json#/sensitivity/0/slope", "ev:results/clearance.json#/metrics/min_clearance_mm/value"]},
+            {"name": "B: 캠 돌기 0.45 → 0.30 mm", "effect": "gap 0.45로 두 목표 충족(추정)", "cost": "캠 도면 변경",
+             "reversible": "보통", "evidence": ["ev:tools/check_clearance.py#L4"]},
+            {"name": "C: envelope 확대", "effect": "두 목표 충족(추정)", "cost": "외형·인터페이스 변경",
+             "reversible": "어려움", "evidence": ["ev:params/cam.json#/envelope_mm"]}],
+        "recommendation": "B", "reason": "인터페이스를 바꾸지 않고 두 목표를 함께 맞출 수 있는 유일한 후보. 돌기 높이의 기능 영향 확인 필요",
+        "blocks": ["clearance 수정", "벽 강도 확정 판정"], "status": "open"}], ensure_ascii=False, indent=1) + "\n")
 
 
 SCENARIOS = {k[len("scenario_"):]: v for k, v in globals().items() if k.startswith("scenario_")}

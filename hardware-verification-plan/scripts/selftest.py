@@ -215,6 +215,43 @@ def fix_cases(root):
     rc, out = run(["hvp_flow.py", "pipe", "--D", "0.01", "--L", "1", "--Q", "2.4e-5"], rv)
     case("flow: transitional Reynolds number flagged", "TRANSITIONAL" in out, out)
 
+    # ------------------------------------------------ brief
+    rb = new_repo(root, "repo-brief")
+    os.makedirs(os.path.join(rb, "params")); os.makedirs(os.path.join(rb, "verification"))
+    open(os.path.join(rb, "params/cam.json"), "w").write('{"gap_mm": 0.3, "envelope_mm": 3.8}\n')
+    hp = sha(os.path.join(rb, "params/cam.json"))
+    write_json(os.path.join(rb, "results/clear.json"), {
+        "status": "FAIL", "layer": "L2", "question": "assembly", "part": "cam/housing", "inputs": {"params/cam.json": hp},
+        "scope": "lobe vs housing <script>alert(1)</script>", "assumptions": ["rigid"], "limitations": ["no tolerance"],
+        "criteria_source": {"min_clearance_mm": "customer spec"}, "provenance": {"command": "python3 c.py"},
+        "metrics": {"min_clearance_mm": {"value": -0.15, "limit": 0.0, "target": 0.15, "uncertainty": 0.03}}})
+    write_json(os.path.join(rb, "results/wall.json"), {
+        "status": "PASS", "layer": "L3", "question": "physical", "part": "housing", "inputs": {"params/cam.json": hp},
+        "scope": "wall static", "assumptions": ["linear"], "limitations": ["no fatigue"],
+        "provenance": {"command": "python3 w.py"},
+        "metrics": {"safety_factor": {"value": 1.6, "limit": 1.0, "target": 1.5, "uncertainty": 0.12}}})
+    write_json(os.path.join(rb, "verification/decisions.json"), [{"id": "D-1", "question": "fix?", "options": [
+        {"name": "A", "effect": "widen", "evidence": ["ev:results/clear.json#/metrics/min_clearance_mm/value",
+                                                      "ev:results/nope.json#/x"]}], "status": "open"}])
+    sh("git add -A && git commit -qm ev", rb)
+    rc, out = run(["hvp_brief.py", "--title", "t"], rb)
+    md_ = open(os.path.join(rb, "docs/verification/brief.md")).read()
+    ht = open(os.path.join(rb, "docs/verification/brief.html")).read()
+    case("brief: both files written; attention lists the FAIL and the recorded PASS that metrics put below target",
+         rc == 0 and "`results/clear.json` — FAIL" in md_ and "`results/wall.json` — PASS_BELOW_TARGET, INCONSISTENT" in md_, out + md_[:600])
+    case("brief: coverage shows empty cells as no check, not PASS", "| cam/housing | 검사 없음 | FAIL (1) |" in md_, md_[:2000])
+    case("brief: decision evidence resolved to its current value; unresolvable reference marked",
+         "근거 현재 값: -0.15 `ev:results/clear.json#/metrics/min_clearance_mm/value`" in md_ and "근거(파일 없음)" in md_, md_[:2500])
+    case("brief: html is self-contained and escapes evidence text",
+         "http://" not in ht and "https://" not in ht and "<script>alert" not in ht and "&lt;script&gt;" in ht)
+    rc, out = run(["hvp_cite.py", "check", "docs/verification/brief.md"], rb)
+    case("brief: the citable brief passes the citation check", rc == 0 and "problems=0 uncited=0" in out, out)
+    open(os.path.join(rb, "params/cam.json"), "w").write('{"gap_mm": 0.6, "envelope_mm": 3.8}\n')
+    run(["hvp_brief.py"], rb)
+    md_ = open(os.path.join(rb, "docs/verification/brief.md")).read()
+    case("brief: a changed design input shows as STALE on the checks and the input", "STALE_INPUT" in md_
+         and "해시 불일치(STALE" in md_ and "gap_mm = 0.6 `ev:params/cam.json#/gap_mm`" in md_, md_[:3000])
+
     # ------------------------------------------------ impact
     ri = new_repo(root, "repo-impact")
     os.makedirs(os.path.join(ri, "src")); os.makedirs(os.path.join(ri, "ev"))
@@ -403,7 +440,7 @@ def fix_cases(root):
         "[^sf]: ev:results/wall.json#%s\n" % (WP, WP, WP))
     rc, out = run(["hvp_cite.py", "check", "clean.md", "--rerun"], rc_)
     case("cite check: value with target, adjacent cites, footnote, BOM line ref all accepted; rerun reproduces",
-         rc == 0 and "citations_ok=5 problems=0 uncited=0 no_context=0 reproduced=1/1" in out, out)
+         rc == 0 and "citations_ok=5 problems=0 uncited=0 no_context=0 estimates=0 reproduced=1/1" in out, out)
     open(os.path.join(rc_, "dirty.md"), "w").write(
         "wall SF 1.45 `ev:results/wall.json#%s`\n"            # 1 wrong number
         "bolts 6 pcs `ev:bom.csv#L3`\n"                           # 2 number not in that line
@@ -411,12 +448,13 @@ def fix_cases(root):
         "the housing is sufficiently safe\n"                      # 4 judgment, uncited
         "x 3.0 `ev:results/bare.json#/metrics/x/value`\n"         # 5 no context
         "clearance 0.21 mm\n"                                     # 6 unit number, uncited
-        "see 1.0[^nope]\n" % WP)                                  # 7 undefined footnote
+        "see 1.0[^nope]\n"                                       # 7 undefined footnote
+        "required gap 0.60 mm (INFERRED: 0.45 + 0.15)\n" % WP)   # 8 labelled estimate
     rc, out = run(["hvp_cite.py", "check", "dirty.md"], rc_)
     case("cite check: wrong number, wrong line ref, uncited ratio/judgment/unit, no context, bad footnote",
          rc == 1 and "MISMATCH line 1" in out and "MISMATCH line 2" in out and "UNCITED  line 3" in out
          and "UNCITED_JUDGMENT line 4" in out and "NO_CONTEXT line 5" in out and "UNCITED  line 6" in out
-         and "MISSING  line 7" in out, out)
+         and "MISSING  line 7" in out and "ESTIMATE line 8" in out and "UNCITED  line 8" not in out, out)
     return base_rev
 
 
