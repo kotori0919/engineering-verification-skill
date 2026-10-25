@@ -22,7 +22,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import hvp_common as C  # noqa: E402
 
-RAW = r"(^|/)raw/|_raw/|\.(vtu|vtk|frd|rmed|h5|hdf5|npz|npy|log|skill)$"
+RAW = r"(^|/)raw/|_raw/|\.(vtu|vtk|frd|rmed|h5|hdf5|npz|npy|log|skill|mcap|bag|db3)$"
 
 
 def main():

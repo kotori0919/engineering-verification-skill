@@ -2,7 +2,7 @@
 
 (skill 이름은 `hardware-verification-plan`이다. 설치 경로와 skill 이름은 그대로 쓴다.)
 
-실물 엔지니어링 프로젝트(CAD 기구, 조립체, 공정 기계, 3D 출력·가공 부품, 펌웨어·제어)를 AI 에이전트가 검증·테스트·수정할 수 있게 하는 Claude skill이다. 방법론 문서와 함께, 검증 절차와 검증 결과에 근거한 설계 수정 루프를 실제로 돌리는 도구 17종, 그 도구의 자체 시험, 에이전트 행동을 보는 평가 세트를 담고 있다.
+실물 엔지니어링 프로젝트(CAD 기구, 조립체, 공정 기계, 3D 출력·가공 부품, 펌웨어·제어)를 AI 에이전트가 검증·테스트·수정할 수 있게 하는 Claude skill이다. 방법론 문서와 함께, 검증 절차와 검증 결과에 근거한 설계 수정 루프를 실제로 돌리는 도구 21종, 그 도구의 자체 시험, 에이전트 행동을 보는 평가 세트를 담고 있다.
 
 ## 무엇을 하는가
 
@@ -65,11 +65,38 @@ python3 evals/fixtures/make_fixture.py brief /tmp/brief-demo
 cd /tmp/brief-demo && python3 <skill>/scripts/hvp_brief.py --title demo && open docs/verification/brief.html
 ```
 
+## 데이터 계층 (MCAP → Parquet → DuckDB → MCP)
+
+시뮬레이터 앙상블, 시험대, HIL 로그처럼 판정 근거가 시계열이면 데이터 계층을 쓴다.
+
+```
+MCAP·CSV 기록 ─ hvp_ingest ─▶ Parquet 표 + 실행 메타 + 해시 목록
+                                 │
+                 저장된 SQL 검사 ─ hvp_query ─▶ 판정 증거(SQL, 표 해시, 값이 나온 실행·시각)
+                                 │
+              읽기 전용 질의 ─ hvp_mcp (Claude Code 등) ─▶ 답 + SQL + 재실행 명령
+```
+
+- **판정은 저장된 SQL이 낸다**: MCP 답은 판정이 아니다. 답마다 SQL과 터미널 재실행 명령이 붙어 사용자가 직접 다시 돌릴 수 있다.
+- **바뀐 데이터는 자동으로 드러난다**: 기록을 다시 넣으면 그 표를 읽은 증거가 STALE로 잡히고, `--rerun`이 값을 다시 만들어 대조한다.
+- **원본은 사용자가 직접 본다**: 판단 자료가 값이 나온 실행과 시각을 보여 주므로, 그 MCAP를 Foxglove로 열어 원본을 확인할 수 있다.
+- **환경**: `env/requirements-data.lock` 하나로 고정한다(2026-09-30 기준 해석, 30개 패키지). Nix 프로젝트는 `env/flake.nix` 셸이 같은 잠금을 쓰고, 그 밖에는 저장소 밖 공유 venv를 쓴다. `*` 표시 도구는 `python3 scripts/hvp_env.py run <도구>`로 실행한다.
+
+```sh
+python3 hardware-verification-plan/scripts/hvp_env.py detect
+python3 hardware-verification-plan/scripts/hvp_env.py setup
+python3 hardware-verification-plan/scripts/hvp_env.py run selftest_data.py   # SELFTEST_DATA 24/24 passed
+```
+
 ## 구성
 
 ```
 hardware-verification-plan/
 ├── SKILL.md                     절차(0–11단계), 오라클 배정표, 함정, 범위와 안전
+├── env/
+│   ├── requirements-data.in     데이터 계층 최상위 고정 버전
+│   ├── requirements-data.lock   간접 의존성까지 전부 고정한 잠금
+│   └── flake.nix                Nix 프로젝트용 데이터 셸 견본
 ├── references/
 │   ├── oracle-catalog.md        오라클(피로·유체·파괴·진동·크리프·ERC/DRC 포함), 판정 기록 규약, 수정 패턴, 복합 검증, V&V·정확도, 효율
 │   ├── runbook.md               실행 절차: 세션 격리, 결정론, 낡은 증거, 커밋 무결성, 제작 준비, 수정 루프
@@ -87,6 +114,10 @@ hardware-verification-plan/
     ├── hvp_verdicts.py          수정 전후 판정 비교(FIXED, REGRESSED, LOST, MARGIN_DROP, CRITERIA_CHANGED)
     ├── hvp_fixloop.py           이슈별 시도 기록, 예산·반복·결합·진동·정체 감지
     ├── hvp_redgreen.py          회귀 시험이 수정을 되돌리면 실패하는지 확인
+    ├── hvp_env.py               프로젝트 환경 감지(Nix, venv), 데이터 환경 확인·생성·실행
+    ├── hvp_ingest.py *          MCAP·CSV → Parquet 표, 실행 메타, 해시 목록
+    ├── hvp_query.py *           저장된 SQL 검사(지표, 사건) → 판정 증거, 즉석 SQL
+    ├── hvp_mcp.py *             읽기 전용 MCP 서버(데이터 질의)
     ├── hvp_brief.py             판단 자료: 증거 전체를 사람이 판단할 수 있게 정리(HTML + 인용 Markdown)
     ├── hvp_cite.py              숫자 하나의 뜻·출처·재현 여부, 보고서 인용 검사
     ├── hvp_gci.py               메시 수렴(관측 차수, 외삽값, GCI)
@@ -94,7 +125,8 @@ hardware-verification-plan/
     ├── hvp_fatigue.py           레인플로, 평균응력·Miner 피로 손상, Paris 균열 성장, LEFM
     ├── hvp_flow.py              배관·유로 압력 손실(층류·난류·천이)
     ├── hvp_common.py            공용 함수
-    └── selftest.py              위 도구들의 known-answer 자체 시험(90건)
+    ├── selftest.py              위 도구들의 known-answer 자체 시험(92건)
+    └── selftest_data.py *       데이터 계층 자체 시험(합성 MCAP, 24건)
 
 evals/                           (skill 패키지 밖) 행동 시나리오 9개, 발동 평가 20문항, 모의 저장소 생성기, 실행 결과(`evals/results/`)
 ```
@@ -122,7 +154,7 @@ zip -r hardware-verification-plan.skill hardware-verification-plan -x '*/__pycac
 설치한 환경에서 도구 자체가 맞게 동작하는지 먼저 확인한다. 검사기를 믿기 전에 정답을 아는 입력으로 시험한다는 skill의 원칙을 도구에도 적용한 것이다.
 
 ```sh
-python3 hardware-verification-plan/scripts/selftest.py      # SELFTEST 90/90 passed
+python3 hardware-verification-plan/scripts/selftest.py      # SELFTEST 92/92 passed
 ```
 
 ## 사용 예
@@ -182,13 +214,15 @@ python3 $S/hvp_fixloop.py show --sid agent-1 --issue I-1 --md           # 시도
 | v6.1 | 숫자의 뜻(범위·가정·한계) 필수, 기록된 명령으로 재실행 대조, 인용 검사 휴리스틱 수정 |
 | v7 | 불확도 반영 판정(INDETERMINATE), GCI, 스윕 경계 이분, 복합 검증, 피로·유체·파괴·진동·크리프, 평가 시나리오 9 실행 |
 | v7.1 | 판단 자료(`hvp_brief.py`): 먼저 볼 것, 결정 대기, 커버리지, 검사별 카드, 설계 입력, 합의를 증거에서 직접 생성 |
+| v8 | 데이터 계층: 환경(Nix·venv, 잠금), MCAP·CSV → Parquet, 저장된 SQL 판정·사건 검사, 읽기 전용 MCP, 판단 자료에 데이터 위치 |
 
 자세한 내용은 [CHANGELOG.md](CHANGELOG.md).
 
 ## 검증 상태
 
-- `selftest.py` 90/90 통과: Linux, Python 3.13, git 2.43. 수정 루프 도구는 도구 결함 6종을 일부러 심어 시험이 그 결함을 잡는지 확인했고, 모의 저장소에서 runbook 9절 순서를 처음부터 끝까지 실행했다.
-- 시험하지 못한 것: macOS의 `lsof` 경로, FreeCAD 헤드리스 드라이버, nix 환경과 실제 저장소의 pre-push 훅. 해당 환경에서 `selftest.py`를 먼저 돌린다.
+- `selftest.py` 92/92, `selftest_data.py` 24/24 통과: Linux, Python 3.13, git 2.43. 수정 루프 도구는 도구 결함 6종을 일부러 심어 시험이 그 결함을 잡는지 확인했고, 모의 저장소에서 runbook 9절 순서를 처음부터 끝까지 실행했다.
+- 시험하지 못한 것: `env/flake.nix`는 문법 검사만 했다(작업 환경에서 Nix 바이너리 캐시에 닿지 않음). 실제 시뮬레이터·시험대 기록은 아직 없어 합성 MCAP으로만 시험했다.
+- 그 밖에 시험하지 못한 것: macOS의 `lsof` 경로, FreeCAD 헤드리스 드라이버, nix 환경과 실제 저장소의 pre-push 훅. 해당 환경에서 `selftest.py`를 먼저 돌린다.
 
 - 행동 평가는 시나리오 9만 skill 있음·없음 각 1회 실행했다. 결과와 채점 원문은 `evals/results/2026-10-22-scenario9/`에 있다. skill 쪽이 인용·재현 검사를 통과했고(36개 인용, 재현 7/7), 내용의 핵심은 기준선도 해냈다. 비용은 토큰 약 2.5배였다. 나머지 시나리오와 발동 평가는 아직 실행하지 않았다.
 

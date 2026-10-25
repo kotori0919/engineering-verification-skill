@@ -144,6 +144,8 @@ def collect(top, pattern):
                            "ctx_ptr": ctx_ptr, "criteria_source": doc.get("criteria_source"), "inputs": ins,
                            "command": pv.get("command"), "gen_commit": pv.get("commit"), "last": last,
                            "dirty": dirty, "sensitivity": node.get("sensitivity", doc.get("sensitivity")) or [],
+                           "where": (node.get("data") or {}).get("where") if isinstance(node.get("data"), dict) else None,
+                           "data_sql": (node.get("data") or {}).get("sql") if isinstance(node.get("data"), dict) else None,
                            "flags": flags, "doc": doc})
     return checks, evidence_files, docs
 
@@ -349,6 +351,17 @@ def md(meta, checks, decisions, params, consensus, top):
             if isinstance(sv, dict):
                 w("- 감도: %s → %s, 기울기 %s %s" % (sv.get("input"), sv.get("metric"), fmt(sv.get("slope")),
                                                cite(f, "%s/sensitivity/%d/slope" % (c["pre"], i))))
+        if c["where"]:
+            w("- 데이터 위치(값이 나온 곳): %s" % ", ".join("%s %s %s" % (k, fmt(v), cite(f, "%s/data/where/%s" % (c["pre"], k)))
+                                                     for k, v in c["where"].items()))
+        if c["data_sql"]:
+            w("- 판정 SQL:")
+            w("")
+            w("  ```sql")
+            for line in c["data_sql"].splitlines():
+                w("  %s" % line)
+            w("  ```")
+            w("")
         if c["command"]:
             w("- 생성 명령:")
             w("")
@@ -561,6 +574,11 @@ def page(meta, checks, decisions, params, consensus, top, md_name):
         for sv in c["sensitivity"]:
             if isinstance(sv, dict):
                 w("<li><b>감도</b>: %s → %s, 기울기 %s</li>" % (esc(sv.get("input")), esc(sv.get("metric")), esc(fmt(sv.get("slope")))))
+        if c["where"]:
+            w("<li><b>데이터 위치</b>: %s <span class=\"mut\">(Foxglove 등으로 그 실행의 그 시각을 열어 볼 수 있다)</span></li>" % esc(
+                ", ".join("%s = %s" % (k, fmt(v)) for k, v in c["where"].items())))
+        if c["data_sql"]:
+            w("<li><b>판정 SQL</b>: <code>%s</code></li>" % esc(" ".join(c["data_sql"].split())))
         w("<li><b>생성 명령</b>: %s</li>" % ("<code>%s</code>" % esc(c["command"]) if c["command"] else '<span class="mut">기록 없음</span>'))
         w("<li><b>증거</b>: <code>%s</code>, 마지막 커밋 %s%s</li>" % (esc(c["file"]), esc(c["last"]), " · 커밋 안 된 변경 있음" if c["dirty"] else ""))
         w("<li><b>직접 확인</b>: <code>python3 &lt;skill&gt;/scripts/hvp_cite.py get %s %s --rerun</code></li></ul></div>" % (

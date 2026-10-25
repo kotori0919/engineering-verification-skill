@@ -402,5 +402,8 @@ def candidate_worktree(top, base_dir, name, commit="HEAD", with_changes=True, in
     for p in inputs:
         src, dst = os.path.join(top, p), os.path.join(wt, p)
         os.makedirs(os.path.dirname(dst) or wt, exist_ok=True)
-        (shutil.copytree if os.path.isdir(src) else shutil.copy2)(src, dst)
+        if os.path.isdir(src):
+            shutil.copytree(src, dst, dirs_exist_ok=True)    # may already exist when partly tracked
+        else:
+            shutil.copy2(src, dst)
     return wt

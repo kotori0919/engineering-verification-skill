@@ -252,6 +252,19 @@ def fix_cases(root):
     case("brief: a changed design input shows as STALE on the checks and the input", "STALE_INPUT" in md_
          and "해시 불일치(STALE" in md_ and "gap_mm = 0.6 `ev:params/cam.json#/gap_mm`" in md_, md_[:3000])
 
+    # ------------------------------------------------ data environment (stdlib part)
+    re_ = new_repo(root, "repo-env")
+    open(os.path.join(re_, "flake.nix"), "w").write("{ }\n")
+    open(os.path.join(re_, "requirements.txt"), "w").write("numpy\n")
+    rc, out = run(["hvp_env.py", "detect"], re_, {"HVP_PY": "", "HVP_CACHE": os.path.join(root, "nocache")})
+    case("env detect: project markers (flake.nix, requirements.txt) and the flake advice",
+         "MARKER   flake.nix          Nix flake" in out and "MARKER   requirements.txt" in out
+         and "nix develop -c" in out, out)
+    lock = open(os.path.join(os.path.dirname(HERE), "env", "requirements-data.lock")).read()
+    top_pins = open(os.path.join(os.path.dirname(HERE), "env", "requirements-data.in")).read()
+    case("env lock: every top-level pin appears with the same version in the full lock",
+         all(l.strip() in lock for l in top_pins.splitlines() if "==" in l and not l.startswith("#")), top_pins)
+
     # ------------------------------------------------ impact
     ri = new_repo(root, "repo-impact")
     os.makedirs(os.path.join(ri, "src")); os.makedirs(os.path.join(ri, "ev"))

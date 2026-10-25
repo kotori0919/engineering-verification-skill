@@ -1,0 +1,8 @@
+# Data layer (MCAP -> Parquet -> DuckDB, MCP server). Top-level pins only; the full,
+# transitive lock is requirements-data.lock. Edit here, then regenerate the lock (see runbook 12).
+duckdb==1.4.4
+pyarrow==21.0.0
+mcap==1.3.0
+mcp==1.12.4
+# mcp 1.12.4 breaks with newer pydantic (ImportError: eval_type_backport); keep pinned together
+pydantic==2.11.7

@@ -16,6 +16,7 @@ SKILL.md 1·6·7·8·9단계의 실행 절차. 반복되는 점검은 `scripts/`
 9. 설계 수정 루프
 10. 보고와 인용
 11. 판단 자료
+12. 데이터 계층: 환경과 도구
 
 ---
 
@@ -40,9 +41,16 @@ SKILL.md 1·6·7·8·9단계의 실행 절차. 반복되는 점검은 `scripts/`
 | `hvp_consensus.py` | 독립 방법들의 합의(E_n), 보수 경계 판정 | 0 합의·통과, 1 그 외 |
 | `hvp_fatigue.py` | 레인플로, 평균응력 보정·Miner 손상, Paris 균열 성장, LEFM K 검사 | 0 통과, 1 미달 |
 | `hvp_flow.py` | 레이놀즈 수, 마찰 계수(Colebrook·Haaland 대조), 압력 손실 | 0 통과, 1 초과 |
+| `hvp_env.py` | 프로젝트 환경 감지(Nix, venv, conda), 데이터 환경 확인·생성, 데이터 도구 실행 | 0 정상, 2 환경 없음 |
+| `hvp_ingest.py`* | MCAP·CSV → Parquet 표, 실행 메타, 해시 목록 | 0 |
+| `hvp_query.py`* | 저장된 SQL 검사(metric, events) → 판정 증거, 즉석 SQL | 0 통과, 1 미달 |
+| `hvp_mcp.py`* | 읽기 전용 MCP 서버(데이터 질의) | — |
 | `hvp_brief.py` | 증거 전체로 판단 자료(HTML + 인용이 붙은 Markdown) 생성 | 0 생성 |
 | `hvp_cite.py` | 값 하나의 출처·상태 보기(`get`), 보고서의 인용 검사와 출처 없는 숫자 찾기(`check`) | get 0/1, check 0 깨끗, 1 문제 |
 | `selftest.py` | 위 도구들의 known-answer 자체 시험(임시 저장소에서) | 0 전부 통과 |
+| `selftest_data.py`* | 데이터 계층의 known-answer 자체 시험(합성 MCAP) | 0 전부 통과 |
+
+\* 표시 도구는 데이터 환경이 필요하다. `python3 $S/hvp_env.py run <도구> ...`로 실행한다(12절). 나머지는 표준 라이브러리만 쓴다.
 
 **처음 쓰는 환경에서는 자체 시험부터 돌린다.** 검사기를 믿기 전에 정답을 아는 입력으로 확인한다는 skill의 원칙을 도구 자신에게도 적용한다.
 
@@ -412,3 +420,66 @@ python3 $S/hvp_cite.py check docs/verification/brief.md --rerun     # 판단 자
 - 판정 표시는 기록된 status와 지표에서 유도한 status 중 더 나쁜 쪽이다. 둘이 다르면 INCONSISTENT로 표시하고 기록된 값도 함께 보여 준다. 예를 들어 불확도를 넣으면 기록된 PASS가 목표 미달로 바뀔 수 있다.
 - 판단 자료의 인용 검사에서 나오는 NO_CONTEXT, NO_COMMAND는 판단 자료의 결함이 아니라 증거의 빈 곳이다. 그 검사기에 맥락·생성 명령을 기록하는 작업을 제안한다.
 - 결정 파일의 결정 문구에 있는 숫자는 근거가 아니다. 근거는 `evidence`의 `ev:` 참조다. 문구 안의 추정치에는 "(추정)"을 붙인다. 인용 검사는 그것을 ESTIMATE로 따로 센다.
+
+## 12. 데이터 계층: 환경과 도구
+
+oracle-catalog 41절의 절차다.
+
+**환경**
+
+```sh
+python3 $S/hvp_env.py detect      # 프로젝트 표지(flake.nix, .venv, requirements, environment.yml)와 데이터 python
+python3 $S/hvp_env.py check       # 잠금의 최상위 고정 버전과 일치하는 python이 있는지. --strict: 잠금 전체
+python3 $S/hvp_env.py setup       # 잠금대로 공유 venv 생성: ~/.cache/hvp/venv-py<버전>-<잠금 해시> (저장소 밖)
+python3 $S/hvp_env.py run hvp_query.py --tables
+```
+
+- 데이터 python은 다음 순서로 찾는다. 셋 중 잠금의 최상위 고정 버전과 일치하는 첫 번째를 쓴다.
+  1. `$HVP_PY`
+  2. 현재 인터프리터
+  3. 이 잠금의 공유 venv
+- **Nix 프로젝트**:
+  - 프로젝트 검사는 지금처럼 `nix develop -c <cmd>`로 돌린다.
+  - 데이터 도구는 `env/flake.nix`의 devShell을 프로젝트 flake에 합친다. 그 셸이 python을 제공하고, shellHook이 같은 잠금으로 venv를 맞춘 뒤 `HVP_PY`를 내보낸다. 그래서 Nix 경로와 venv 경로는 같은 버전을 쓴다.
+  - 순수 Nix(`python3.withPackages`)로 바꾸면 버전이 nixpkgs를 따라가 잠금과 어긋날 수 있다. 바꾼다면 잠금도 그 버전으로 다시 만든다.
+- **venv 프로젝트**: 프로젝트 venv에 데이터 패키지를 섞지 않는다. 버전 충돌이 나기 쉽다. 공유 venv를 쓰고 `hvp_env.py run`으로 실행한다.
+- **잠금을 바꿀 때**: `env/requirements-data.in`만 고친 뒤 기준일을 2주 이상 지난 날짜로 정해 다시 해석한다.
+
+  ```sh
+  python3 -m venv /tmp/lockenv && /tmp/lockenv/bin/pip install --uploaded-prior-to <YYYY-MM-DD>T00:00:00Z -r env/requirements-data.in
+  /tmp/lockenv/bin/pip freeze   # 머리말 3줄(기준일, 해석 python, 설치 명령)과 함께 requirements-data.lock에 쓴다
+  ```
+
+  그다음 `selftest_data.py`를 통과시킨다. 최상위만 고정하면 간접 의존성이 바뀌어 깨진다. 실제로 `mcp 1.12.4`는 최신 `pydantic`과 import 단계에서 깨졌다.
+
+**수집과 판정**
+
+```sh
+python3 $S/hvp_env.py run hvp_ingest.py mcap data/raw/*.mcap
+python3 $S/hvp_env.py run hvp_ingest.py csv rig/bench-03.csv --topic bench/motor --run-id bench-03 --time-col t --time-unit ms
+python3 $S/hvp_env.py run hvp_query.py --tables                       # 뷰, 열, 실행별 행 수
+python3 $S/hvp_env.py run hvp_query.py --sql "SELECT run_id, max(current_A) FROM drive__motor GROUP BY 1"
+python3 $S/hvp_env.py run hvp_query.py checks/motor_peak.json         # 판정 증거 results/<id>.json
+python3 $S/hvp_cite.py get results/motor-peak.json /metrics/peak_current_A/value --rerun --inputs data/tables data/runs
+```
+
+- 표 이름은 주제에서 `/`를 `__`로 바꾼 것이다(`/drive/motor` → `drive__motor`).
+- `INPUT STALE`이 보이면 기록을 다시 수집한 것이다. 검사를 다시 돌린다.
+- `SKIP` 줄은 해석하지 못한 채널이다. ros2/cdr 메시지는 `mcap-ros2-support`를 잠금에 더해야 해석된다. 건너뛴 채널은 `runs/<run>.json`에 남는다.
+- `data/tables`를 커밋하지 않으면 재실행할 때 `--inputs data/tables data/runs`를 준다.
+- 원본 `.mcap`은 `hvp_stagecheck.py`가 원시 산출물로 막는다.
+
+**MCP 등록(Claude Code)**
+
+프로젝트 루트의 `.mcp.json`:
+
+```json
+{"mcpServers": {"hvp-data": {"command": "python3",
+  "args": ["<skill>/scripts/hvp_env.py", "run", "hvp_mcp.py", "--data", "data"]}}}
+```
+
+- 도구: `list_runs`, `schema`, `query`, `series`, `run_check`, `cite`
+- 서버는 시작할 때 표를 읽으므로, 다시 수집한 뒤에는 서버를 다시 띄운다.
+- MCP 답을 보고에 옮길 때는 답에 붙은 `reproduce` 명령을 함께 적는다. 판정은 저장된 검사로만 낸다.
+
+**자체 시험**: 처음 쓰는 환경에서 `python3 $S/hvp_env.py run selftest_data.py`. 합성 MCAP으로 수집, 지표, 사건, 재실행, STALE, MCP 읽기 전용, 판단 자료 연동을 확인한다.
