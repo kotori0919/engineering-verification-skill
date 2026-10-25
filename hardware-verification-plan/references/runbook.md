@@ -17,6 +17,7 @@ SKILL.md 1·6·7·8·9단계의 실행 절차. 반복되는 점검은 `scripts/`
 10. 보고와 인용
 11. 판단 자료
 12. 데이터 계층: 환경과 도구
+13. 지속 결함 진단
 
 ---
 
@@ -35,7 +36,12 @@ SKILL.md 1·6·7·8·9단계의 실행 절차. 반복되는 점검은 `scripts/`
 | `hvp_impact.py` | 바꿀 경로에 의존하는 증거(직접·전이)와 재실행 순서, 해시 기록 없는 의존 | 0 정상, 3 입력 오류 |
 | `hvp_sweep.py` | 후보 값마다 임시 worktree에서 1차 오라클 실행, 하한·목표 도달 값과 단조성 | 0 목표 도달, 1 미도달, 2 실행 실패 |
 | `hvp_verdicts.py` | 수정 전후 판정 비교: FIXED, REGRESSED, LOST, MARGIN_DROP, CRITERIA_CHANGED, INCONSISTENT | 0 ACCEPTABLE, 1 NOT_ACCEPTABLE |
-| `hvp_fixloop.py` | 이슈별 시도 기록, 예산·반복·결합·진동·정체 감지 | 0 계속, 3 멈춤 |
+| `hvp_fixloop.py` | 이슈별 시도 기록, 예산·반복·결합·진동·정체 감지, 이전 루프 탐색(PERSISTENT), 저장소로 내보내기 | 0 계속, 3 멈춤 |
+| `hvp_isolate.py` | 끌 수 있는 항목(접촉쌍, 바디, 관절)을 대조군과 ddmin으로 줄여 실패에 필요한 최소 집합, 독립 원인 여러 개 | 0 ISOLATED, 1 그 외 |
+| `hvp_contact.py` | 행정을 따른 쌍별 접촉 구간과 처음 닿는 위치(`map`), 수정 전후 비교와 WHACK_A_MOLE(`diff`) | 0 위반 없음, 1 위반 |
+| `hvp_pathfit.py` | 이중 안내(핀–홈, 캠 종동절)의 경로 대 안내 중심선: FITS, OFFSET, OVERTRAVEL, LOCAL, MISMATCH | 0 FITS, 1 그 외 |
+| `hvp_history.py` | 같은 검사를 지난 커밋마다 실행(오늘의 검사기 덮어쓰기 가능): 회귀 커밋, 근거 없는 수정 주장, 정체 | 0 최신 통과, 1 그 외 |
+| `hvp_rca.py` | 원인 원장: 가설별 시험·예상·상태·근거, 원인 없는 수정 검출, 보고 표 | 0 문제 없음, 1 문제 |
 | `hvp_redgreen.py` | 회귀 시험이 수정이 있을 때 통과하고 수정을 되돌리면 실패하는지 확인 | 0 RED_GREEN_OK, 1 그 외 |
 | `hvp_gci.py` | 메시·시간 간격 3단의 관측 차수, 외삽값, GCI(수치 오차) | 0 기준 안, 1 초과·신뢰 불가 |
 | `hvp_consensus.py` | 독립 방법들의 합의(E_n), 보수 경계 판정 | 0 합의·통과, 1 그 외 |
@@ -483,3 +489,87 @@ python3 $S/hvp_cite.py get results/motor-peak.json /metrics/peak_current_A/value
 - MCP 답을 보고에 옮길 때는 답에 붙은 `reproduce` 명령을 함께 적는다. 판정은 저장된 검사로만 낸다.
 
 **자체 시험**: 처음 쓰는 환경에서 `python3 $S/hvp_env.py run selftest_data.py`. 합성 MCAP으로 수집, 지표, 사건, 재실행, STALE, MCP 읽기 전용, 판단 자료 연동을 확인한다.
+
+## 13. 지속 결함 진단
+
+SKILL.md 7.15와 oracle-catalog 42절의 명령 순서다. `$I`는 이슈 ID, `$T`는 저장소 밖 스크래치 디렉터리다. 순서는 싼 것부터다. 앞 단계에서 원인이 판정되면 뒤 단계는 건너뛴다.
+
+**13.1 진입과 기록**
+
+```sh
+python3 $S/hvp_fixloop.py open --sid $SID --issue $I --checks <검사 id> --cause "<한 줄>"
+#  PRIOR ... / PERSISTENT n earlier loop(s)  -> 이 절차로 들어온다
+python3 $S/hvp_rca.py new verification/rca/$I.json --issue $I --symptom "<관찰된 증상, 수치 포함>"
+```
+
+- 이전 시도들을 원장의 `attempts`에 옮긴다(커밋, 기댄 가설, 결과). 기댄 가설이 없던 시도는 `hypothesis`를 비워 둔다. 결과가 있는 지난 시도라 `PAST FIX_WITHOUT_CAUSE`로 표시되고, 반복 실패의 이유로 보고에 남는다.
+- 루프를 닫을 때마다 내보낸다. `verification/fixlog/`와 `verification/rca/`는 커밋한다.
+
+  ```sh
+  python3 $S/hvp_fixloop.py export --sid $SID --issue $I
+  ```
+
+**13.2 이력 재측정**
+
+```sh
+python3 $S/hvp_history.py --cmd "<1차 오라클>" --out <증거 경로> --metric <지표>     --paths <관련 CAD·파라미터 경로...> --overlay <검사기 경로...> --max 40     --report $T/history-$I.json
+python3 $S/hvp_history.py ... (같은 명령에서 --overlay 없이)   # 차이가 나면 검사기 변화가 섞였던 것
+```
+
+- `CLAIM_NOT_SUPPORTED`, `CLAIM_STILL_FAILING`, `STUCK`은 원장의 해당 시도 결과 칸에 옮긴다. "fixed"로 닫힌 이전 루프가 이 표에서 FAIL이면, 그 루프의 판정 근거(어느 검사기·형상에서 PASS였는지)를 7.2 경계 비교로 확인한다.
+- `REGRESSED_AT` 커밋이 있으면 그 커밋의 차이를 7.2처럼 하나씩 지워 본다(`git bisect run`도 된다).
+- 오래된 커밋은 빌드 의존이 달라 NOT_RUN이 날 수 있다. 그 행은 판단에서 빼고 범위를 보고에 적는다.
+
+**13.3 방법 확인(해결된 사례)**
+
+```sh
+git worktree add $T/solved <해결 직전 커밋>
+(cd $T/solved && python3 $S/hvp_isolate.py --items <항목 파일> --cmd "<오라클 {items}>"     --expect "<실패 문구>" --known "<그때 확인된 원인>")
+git worktree remove $T/solved
+```
+
+- `DIFFERS_FROM_KNOWN`이면 그 오라클이나 항목 정의로 미해결 건을 판단하지 않는다. 먼저 오라클을 고친다(3단계 known-answer).
+
+**13.4 분리**
+
+```sh
+python3 $S/hvp_isolate.py --items $T/contacts-$I.txt --cmd "<오라클> --contacts {items}"     --expect "<실패 문구>" --all-causes --report results/isolate_$I.json
+```
+
+- 오라클 쪽 요구: 항목 목록 파일(`{items}` 또는 `$HVP_ITEMS`)에 있는 것만 켜고 실행한다. 실패가 없으면 0, 있으면 0이 아닌 값으로 끝난다. 추적 파일을 고치지 않는다.
+- Fusion처럼 비싼 도구가 오라클이면 먼저 실행 수를 어림한다(원인 하나에 2·log₂n + 대조군 4 + 재확인). 헤드리스 대리 검사로 줄여 분리하고, Fusion으로는 찾은 집합만 확인한다.
+- 결과를 원장에 옮긴다. FAILS_WITHOUT_ITEMS면 "접촉이 원인" 가설은 ruled_out이다. 다음 가설은 과구속·관절 한계·구동이고, 시험은 oracle-catalog 3절 이동도 계산이다.
+
+**13.5 접촉 지도와 이전 시도 비교**
+
+```sh
+python3 $S/hvp_contact.py map $T/clearance-now.csv --limit <하한> --intended verification/intended_contacts.json     --out results/contact_map_$I.json
+python3 $S/hvp_contact.py diff $T/clearance-before.csv $T/clearance-now.csv --limit <하한> --tol <깊이 허용치>
+```
+
+- 표본 CSV는 `pair,s,d` 열이다. 이전 시도의 표본은 그 시도 커밋에서 같은 거리 검사를 돌려 만든다. 이력 재측정과 같은 worktree 방식을 쓴다.
+- `SINGLE_SAMPLE`이 있으면 그 구간을 세분해서 다시 잰다. 그 전에는 깊이와 범위를 보고하지 않는다.
+
+**13.6 이중 안내 경로 적합**
+
+```sh
+python3 $S/hvp_pathfit.py --path $T/pin_path_$I.csv --guide $T/groove_centerline_$I.csv     --width <홈 폭> --pin-d <핀 지름> --tol <공차> --write-guide $T/guide_from_path_$I.csv     --out results/pathfit_$I.json
+```
+
+- 경로는 홈 구속을 뺀 상태에서 구한다. 홈을 넣은 채 구한 경로는 홈을 따를 수밖에 없어 비교가 되지 않는다.
+- 결과가 MISMATCH면 선택지 셋을 1d 비교표로 낸다. 셋 다 구조 변경이므로 사용자가 정한다.
+  1. 경로에서 홈을 다시 만든다.
+  2. 구속 하나를 없앤다.
+  3. 홈을 넓힌다. 도구가 낸 폭을 쓰고, 유격이 생기는 것을 함께 적는다.
+
+**13.7 판정 후 수정과 보고**
+
+```sh
+python3 $S/hvp_rca.py check verification/rca/$I.json              # 문제 0이어야 다음 시도
+python3 $S/hvp_fixloop.py open --sid $SID --issue $I-r<n> --checks <...> --cause "<확인된 가설 id와 원인>"     --rca verification/rca/$I.json
+python3 $S/hvp_rca.py report verification/rca/$I.json --md        # 템플릿 1e의 원인 분석 표
+```
+
+- 수정은 9절 순서(9.2–9.8)를 그대로 밟는다. 끝에 `hvp_contact.py diff`로 대상 접촉이 RESOLVED인지, WHACK_A_MOLE이 없는지 확인한다.
+- 이 이슈를 재현하는 사례(분리에 쓴 오라클과 항목 집합)는 회귀 시험으로 남기고 `hvp_redgreen.py`로 확인한다.
+

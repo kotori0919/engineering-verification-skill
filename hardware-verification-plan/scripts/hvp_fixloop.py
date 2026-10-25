@@ -7,9 +7,18 @@
   hvp_fixloop.py check   --sid S --issue I          CONTINUE (exit 0) or STOP <reasons> (exit 3)
   hvp_fixloop.py close   --sid S --issue I --result fixed|escalated|abandoned [--note "..."]
   hvp_fixloop.py show    --sid S [--md]             ledger, or a markdown table (templates 7b)
+  hvp_fixloop.py export  --sid S --issue I [--to verification/fixlog/<I>.json]
+                         append this loop to a file in the repository (commit it): the record
+                         that outlives the session, the machine and the clone
 
 The ledger lives next to the session lock: <git-common-dir>/hvp-sessions/<SID>.fixlog.json
-(--ledger PATH overrides). It is a working aid; copy `show --md` into the repo's fix report.
+(--ledger PATH overrides). It is a working aid; copy `show --md` into the repo's fix report, and
+`export` it, because a session ledger is not cloned and a new session starts with a fresh budget.
+
+`open` looks for earlier loops on the same issue id or on overlapping checks, in every session
+ledger of this clone and in verification/fixlog/*.json, and prints them (PRIOR). When there are
+any, the issue is PERSISTENT: `check` stops until a root-cause ledger with a confirmed
+hypothesis is linked (`open --rca verification/rca/<I>.json`, see hvp_rca.py and SKILL 7.15).
 `attempt --verdicts` must compare against the state BEFORE the issue was opened
 (hvp_verdicts.py --before git:<start commit>), so every attempt is measured from the same base.
 
@@ -21,6 +30,7 @@ STOP reasons
   OSCILLATING a check went up and then down again across attempts
   STALLED    the issue's target checks did not improve over the last two attempts
   CLOSED     the issue is already closed
+  PERSISTENT earlier loops on this issue exist and no confirmed root cause is linked (--rca)
 """
 import argparse
 import json
@@ -51,6 +61,49 @@ def save(p, d):
     os.replace(tmp, p)
 
 
+def prior_loops(a, issue, checks):
+    """Earlier loops on the same issue id or overlapping checks, from session ledgers and repo exports."""
+    found, me = [], os.path.abspath(ledger_path(a))
+    srcs = []
+    try:
+        ld = C.lock_dir()
+        srcs += [os.path.join(ld, f) for f in sorted(os.listdir(ld)) if f.endswith(".fixlog.json")]
+    except OSError:
+        pass
+    fdir = os.path.join(C.toplevel(), "verification", "fixlog")
+    if os.path.isdir(fdir):
+        srcs += [os.path.join(fdir, f) for f in sorted(os.listdir(fdir)) if f.endswith(".json")]
+    seen = set()
+    for p in srcs:
+        try:
+            d = json.load(open(p))
+        except (OSError, ValueError):
+            continue
+        loops = []
+        if "issues" in d:
+            loops = [(name, it) for name, it in d["issues"].items() if os.path.abspath(p) != me or name != issue]
+        elif "loops" in d:
+            loops = [(d.get("issue"), it) for it in d["loops"]]
+        for name, it in loops:
+            key = (name, it.get("opened"))
+            if key in seen:
+                continue
+            if name == issue or set(it.get("checks", [])) & set(checks):
+                seen.add(key)
+                found.append({"source": os.path.relpath(p, C.toplevel()) if p.startswith(C.toplevel()) else p,
+                              "issue": name, "attempts": len(it.get("attempts", [])), "result": it.get("result"),
+                              "cause": it.get("cause"), "opened": it.get("opened")})
+    return found
+
+
+def rca_confirmed(path):
+    try:
+        d = json.load(open(os.path.join(C.toplevel(), path)))
+    except (OSError, ValueError):
+        return None
+    return [h.get("id") for h in d.get("hypotheses", []) if h.get("status") == "confirmed"]
+
+
 def rank(s):
     return C.RANK.get(s, -1)
 
@@ -58,6 +111,13 @@ def rank(s):
 def evaluate(iss):
     reasons = []
     att = iss["attempts"]
+    if iss.get("prior"):
+        conf = rca_confirmed(iss["rca"]) if iss.get("rca") else None
+        if not conf:
+            reasons.append("PERSISTENT %d earlier loop(s), %d attempt(s) on this issue; %s" % (
+                len(iss["prior"]), sum(x["attempts"] for x in iss["prior"]),
+                "no root-cause ledger linked (open --rca)" if not iss.get("rca") else
+                "no confirmed hypothesis in %s" % iss["rca"]))
     if iss.get("result"):
         reasons.append("CLOSED (%s)" % iss["result"])
     if len(att) >= iss["budget"]:
@@ -101,7 +161,9 @@ def evaluate(iss):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("op", choices=["open", "attempt", "check", "close", "show"])
+    ap.add_argument("op", choices=["open", "attempt", "check", "close", "show", "export"])
+    ap.add_argument("--rca", help="root-cause ledger (hvp_rca.py) for this issue")
+    ap.add_argument("--to", help="export target (default verification/fixlog/<issue>.json)")
     ap.add_argument("--sid", required=True)
     ap.add_argument("--issue")
     ap.add_argument("--ledger")
@@ -126,11 +188,37 @@ def main():
         if iss:
             print("issue exists:", a.issue)
             return 1
-        d["issues"][a.issue] = {"cause": a.cause, "checks": [c for c in a.checks.split(",") if c],
+        checks = [c for c in a.checks.split(",") if c]
+        prior = prior_loops(a, a.issue, checks)
+        d["issues"][a.issue] = {"cause": a.cause, "checks": checks,
                                 "budget": a.budget, "opened": int(time.time()),
-                                "start_commit": C.head(), "attempts": [], "result": None, "note": ""}
+                                "start_commit": C.head(), "attempts": [], "result": None, "note": "",
+                                "prior": prior, "rca": a.rca}
         save(p, d)
         print("OPEN %s budget=%d checks=%s start=%s ledger=%s" % (a.issue, a.budget, a.checks, C.head()[:12], p))
+        for x in prior:
+            print("PRIOR   %s  %s  attempts=%d result=%s  cause: %s" % (x["source"], x["issue"], x["attempts"],
+                                                                     x["result"] or "open", x["cause"]))
+        if prior:
+            fixed = sum(1 for x in prior if x["result"] == "fixed")
+            print("PERSISTENT %d earlier loop(s), %d attempt(s), %d closed as fixed. Before another attempt follow "
+                  "SKILL 7.15: history scan, contact diff, isolation, root-cause ledger%s" % (
+                      len(prior), sum(x["attempts"] for x in prior), fixed,
+                      "" if a.rca else " (link it with --rca)"))
+        return 0
+    if a.op == "export":
+        if iss is None:
+            print("unknown issue:", a.issue)
+            return 3
+        to = os.path.join(C.toplevel(), a.to or os.path.join("verification", "fixlog", "%s.json" % a.issue))
+        cur = json.load(open(to)) if os.path.exists(to) else {"issue": a.issue, "loops": []}
+        loop = dict(iss, sid=a.sid)
+        cur["loops"] = [x for x in cur["loops"] if (x.get("sid"), x.get("opened")) != (a.sid, iss.get("opened"))]
+        cur["loops"].append(loop)
+        os.makedirs(os.path.dirname(to), exist_ok=True)
+        with open(to, "w") as f:
+            json.dump(cur, f, indent=1, sort_keys=True)
+        print("EXPORTED %s loop(s) of %s -> %s (commit it)" % (len(cur["loops"]), a.issue, os.path.relpath(to, C.toplevel())))
         return 0
     if iss is None and a.op != "show":
         print("unknown issue:", a.issue)

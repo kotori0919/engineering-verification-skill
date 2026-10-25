@@ -2,7 +2,7 @@
 
 (skill 이름은 `hardware-verification-plan`이다. 설치 경로와 skill 이름은 그대로 쓴다.)
 
-실물 엔지니어링 프로젝트(CAD 기구, 조립체, 공정 기계, 3D 출력·가공 부품, 펌웨어·제어)를 AI 에이전트가 검증·테스트·수정할 수 있게 하는 Claude skill이다. 방법론 문서와 함께, 검증 절차와 검증 결과에 근거한 설계 수정 루프를 실제로 돌리는 도구 21종, 그 도구의 자체 시험, 에이전트 행동을 보는 평가 세트를 담고 있다.
+실물 엔지니어링 프로젝트(CAD 기구, 조립체, 공정 기계, 3D 출력·가공 부품, 펌웨어·제어)를 AI 에이전트가 검증·테스트·수정할 수 있게 하는 Claude skill이다. 방법론 문서와 함께, 검증 절차와 검증 결과에 근거한 설계 수정 루프를 실제로 돌리는 도구 26종, 그 도구의 자체 시험, 에이전트 행동을 보는 평가 세트를 담고 있다.
 
 ## 무엇을 하는가
 
@@ -44,6 +44,27 @@
 - **회귀 판정이 "고쳤다"의 근거다**: `hvp_verdicts.py`가 수정 전후를 비교한다. 대상 FIXED, 그리고 REGRESSED·LOST·CRITERIA_CHANGED·INCONSISTENT 0일 때만 ACCEPTABLE이다.
 - **루프 제어**: `hvp_fixloop.py`가 시도 예산, 같은 값 반복, 두 검사가 번갈아 깨지는 결합, 진동, 정체를 감지해 멈춘다.
 - **실패 유형별 수정 패턴**: 간섭, 조립 불가, 공차, 강도, 체결, 이동도, 통로, 열, 제어, 제작성 12종의 작은 변경부터의 순서, 재검증 오라클, 흔한 부작용을 담았다.
+
+## 지속 결함 진단
+
+같은 간섭이나 잠김이 두 번 이상 "고쳤다"가 다시 나오면, 치수를 한 번 더 바꾸지 않고 원인부터 판정한다(SKILL.md 7.15, oracle-catalog 42절). 대개 원인은 다섯 가지 중 하나다.
+
+- 원인이 둘 이상이다.
+- 원인이 접촉이 아니다. 과구속, 관절 한계, 구동이 원인이다.
+- 한 핀을 두 기구가 함께 안내해 경로가 어긋난다.
+- 검사기나 형상 세대가 매번 다르다.
+- 시도 기록이 세션을 넘지 못한다.
+
+| 도구 | 답하는 질문 |
+| --- | --- |
+| `hvp_fixloop.py` (PRIOR, PERSISTENT, `export`) | 이 결함을 전에 몇 번 고쳤나. 확인된 원인 없이 또 고치려 하나 |
+| `hvp_rca.py` | 무엇이 배제됐고, 무엇이 확인 안 됐고, 다음에 무엇을 시험하나 |
+| `hvp_history.py` | 수정이라던 커밋들이 실제로 수치를 움직였나. 언제 나빠졌나 |
+| `hvp_isolate.py` | 무엇을 꺼야 멈춤이 사라지나. 다 꺼도 멈추면 원인은 접촉이 아니다 |
+| `hvp_contact.py` | 접촉이 사라졌나, 다른 쌍이나 다른 위치로 옮겨 갔나 |
+| `hvp_pathfit.py` | 홈을 뺀 기구가 주는 핀 경로가 홈 중심선과 맞나. 이동 하나로 맞나, 모양이 다른가 |
+
+장애 분석 플랫폼(Alloy)에서 가져온 것은 시뮬레이션이 아니라 운영 방식이다. 새 질문을 과거 전체에 다시 돌리고, 원인 분석을 배제됨과 확인 안 됨으로 나눠 보고하고, 지난 사례를 저장소에 남기고, 새 방법은 이미 해결한 사례에서 먼저 맞히는지 본다.
 
 ## 판단 자료
 
@@ -100,7 +121,7 @@ hardware-verification-plan/
 ├── references/
 │   ├── oracle-catalog.md        오라클(피로·유체·파괴·진동·크리프·ERC/DRC 포함), 판정 기록 규약, 수정 패턴, 복합 검증, V&V·정확도, 효율
 │   ├── runbook.md               실행 절차: 세션 격리, 결정론, 낡은 증거, 커밋 무결성, 제작 준비, 수정 루프
-│   ├── pitfalls.md              흔한 함정 31가지
+│   ├── pitfalls.md              흔한 함정 37가지
 │   └── templates.md             문서 템플릿: 범위표, 실행 기록, 수정 보고·후보 비교·시도 이력, 불일치 대장, 초품 검사표
 └── scripts/
     ├── hvp_session.py           세션 잠금, 동시 세션 신호, worktree 격리, 종료
@@ -112,8 +133,13 @@ hardware-verification-plan/
     ├── hvp_impact.py            바꿀 경로에 의존하는 증거(직접·전이)와 재실행 순서
     ├── hvp_sweep.py             후보 값마다 1차 오라클 실행, 하한·목표 도달 값과 단조성
     ├── hvp_verdicts.py          수정 전후 판정 비교(FIXED, REGRESSED, LOST, MARGIN_DROP, CRITERIA_CHANGED)
-    ├── hvp_fixloop.py           이슈별 시도 기록, 예산·반복·결합·진동·정체 감지
+    ├── hvp_fixloop.py           이슈별 시도 기록, 예산·반복·결합·진동·정체 감지, 세션을 넘는 이전 루프 탐색
     ├── hvp_redgreen.py          회귀 시험이 수정을 되돌리면 실패하는지 확인
+    ├── hvp_isolate.py           실패에 필요한 최소 항목 집합(대조군 + ddmin), 독립 원인 여러 개
+    ├── hvp_contact.py           행정을 따른 접촉 지도, 수정 전후 비교(옮겨 간 접촉, WHACK_A_MOLE)
+    ├── hvp_pathfit.py           이중 안내(핀–홈, 캠) 경로 대 안내 중심선 적합
+    ├── hvp_history.py           같은 검사를 지난 커밋마다 실행: 회귀 커밋, 근거 없는 수정 주장
+    ├── hvp_rca.py               원인 원장: 배제됨 / 확인 안 됨 / 다음 시험, 원인 없는 수정 검출
     ├── hvp_env.py               프로젝트 환경 감지(Nix, venv), 데이터 환경 확인·생성·실행
     ├── hvp_ingest.py *          MCAP·CSV → Parquet 표, 실행 메타, 해시 목록
     ├── hvp_query.py *           저장된 SQL 검사(지표, 사건) → 판정 증거, 즉석 SQL
@@ -125,10 +151,10 @@ hardware-verification-plan/
     ├── hvp_fatigue.py           레인플로, 평균응력·Miner 피로 손상, Paris 균열 성장, LEFM
     ├── hvp_flow.py              배관·유로 압력 손실(층류·난류·천이)
     ├── hvp_common.py            공용 함수
-    ├── selftest.py              위 도구들의 known-answer 자체 시험(92건)
+    ├── selftest.py              위 도구들의 known-answer 자체 시험(116건)
     └── selftest_data.py *       데이터 계층 자체 시험(합성 MCAP, 24건)
 
-evals/                           (skill 패키지 밖) 행동 시나리오 9개, 발동 평가 20문항, 모의 저장소 생성기, 실행 결과(`evals/results/`)
+evals/                           (skill 패키지 밖) 행동 시나리오 10개, 발동 평가 20문항, 모의 저장소 생성기, 실행 결과(`evals/results/`)
 ```
 
 도구는 Python 3.8 이상과 git 2.31 이상만 쓴다(표준 라이브러리). 대상 저장소에 파일을 만들지 않는다. 세션 잠금은 `.git` 안, 임시 worktree는 시스템 임시 디렉터리에 둔다.
@@ -154,7 +180,7 @@ zip -r hardware-verification-plan.skill hardware-verification-plan -x '*/__pycac
 설치한 환경에서 도구 자체가 맞게 동작하는지 먼저 확인한다. 검사기를 믿기 전에 정답을 아는 입력으로 시험한다는 skill의 원칙을 도구에도 적용한 것이다.
 
 ```sh
-python3 hardware-verification-plan/scripts/selftest.py      # SELFTEST 92/92 passed
+python3 hardware-verification-plan/scripts/selftest.py      # SELFTEST 116/116 passed
 ```
 
 ## 사용 예
@@ -193,6 +219,20 @@ python3 $S/hvp_fixloop.py attempt --sid agent-1 --issue I-1 --change "간격 확
 python3 $S/hvp_fixloop.py show --sid agent-1 --issue I-1 --md           # 시도 이력(7b)
 ```
 
+지속 결함 진단(두 번 이상 "고쳤는데" 다시 나오는 간섭·잠김, 순서는 `references/runbook.md` 13절):
+
+```sh
+python3 $S/hvp_fixloop.py open --sid agent-1 --issue I-1-r3 --checks results/clearance.json --cause "..."
+#   PRIOR ... / PERSISTENT -> 확인된 원인이 연결될 때까지 수정 루프가 멈춘다
+python3 $S/hvp_rca.py new verification/rca/I-1.json --issue I-1 --symptom "..."
+python3 $S/hvp_history.py --cmd "python3 tools/check_clearance.py" --out results/clearance.json \
+    --metric min_clearance_mm --paths params/ --overlay tools/check_clearance.py
+python3 $S/hvp_isolate.py --items contacts.txt --cmd "python3 sim/stroke.py --contacts {items}" --expect STALLED --all-causes
+python3 $S/hvp_contact.py diff clearance_before.csv clearance_now.csv --limit 0.2
+python3 $S/hvp_pathfit.py --path pin_path.csv --guide groove_centerline.csv --width 6.4 --pin-d 6.0
+python3 $S/hvp_rca.py report verification/rca/I-1.json --md
+```
+
 ## 범위와 안전
 
 - 무기나 고에너지 발사체(장거리 발사, 격발·방출 기구, 발사용 저장 에너지와 그 충전·방출 구동)의 설계, 성능, 격발 신뢰성은 검증·수정·개선하지 않는다. 범위표에서 제외로 분류하고, 실행 전 확인 지점에서 해당 경로의 실행을 멈춘다. 같은 프로젝트의 다른 하위 시스템은 정상적으로 다룬다.
@@ -215,12 +255,13 @@ python3 $S/hvp_fixloop.py show --sid agent-1 --issue I-1 --md           # 시도
 | v7 | 불확도 반영 판정(INDETERMINATE), GCI, 스윕 경계 이분, 복합 검증, 피로·유체·파괴·진동·크리프, 평가 시나리오 9 실행 |
 | v7.1 | 판단 자료(`hvp_brief.py`): 먼저 볼 것, 결정 대기, 커버리지, 검사별 카드, 설계 입력, 합의를 증거에서 직접 생성 |
 | v8 | 데이터 계층: 환경(Nix·venv, 잠금), MCAP·CSV → Parquet, 저장된 SQL 판정·사건 검사, 읽기 전용 MCP, 판단 자료에 데이터 위치 |
+| v9 | 지속 결함 진단: 세션을 넘는 수정 기록, 원인 원장, 이력 재측정, 분리(ddmin), 접촉 지도 비교, 이중 안내 경로 적합 |
 
 자세한 내용은 [CHANGELOG.md](CHANGELOG.md).
 
 ## 검증 상태
 
-- `selftest.py` 92/92, `selftest_data.py` 24/24 통과: Linux, Python 3.13, git 2.43. 수정 루프 도구는 도구 결함 6종을 일부러 심어 시험이 그 결함을 잡는지 확인했고, 모의 저장소에서 runbook 9절 순서를 처음부터 끝까지 실행했다.
+- `selftest.py` 116/116, `selftest_data.py` 24/24 통과: Linux, Python 3.13, git 2.43. 수정 루프 도구는 도구 결함 6종을, 지속 결함 도구는 7종을 일부러 심어 시험이 그 결함을 잡는지 확인했다. 모의 저장소에서 runbook 9절과 13절 순서를 실행했다.
 - 시험하지 못한 것: `env/flake.nix`는 문법 검사만 했다(작업 환경에서 Nix 바이너리 캐시에 닿지 않음). 실제 시뮬레이터·시험대 기록은 아직 없어 합성 MCAP으로만 시험했다.
 - 그 밖에 시험하지 못한 것: macOS의 `lsof` 경로, FreeCAD 헤드리스 드라이버, nix 환경과 실제 저장소의 pre-push 훅. 해당 환경에서 `selftest.py`를 먼저 돌린다.
 

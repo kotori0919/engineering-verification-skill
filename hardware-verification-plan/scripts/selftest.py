@@ -471,6 +471,223 @@ def fix_cases(root):
     return base_rev
 
 
+def persist_cases(root):
+    """Persistent-defect toolkit: isolation, contact map/diff, path fit, history scan, RCA, prior loops."""
+    import csv
+    import math
+    d = os.path.join(root, "persist")
+    os.makedirs(d)
+
+    # ------------------------------------------------ isolate
+    items = os.path.join(d, "items.txt")
+    open(items, "w").write("# contact pairs\n" + "".join("p%d\n" % i for i in range(1, 13)))
+    orc = os.path.join(d, "oracle.py")
+    open(orc, "w").write(
+        "import sys\ns=set(open(sys.argv[1]).read().split())\n"
+        "if 'p7' in s and len(s) <= 6 and 'p3' not in s: print('solver crashed'); sys.exit(2)\n"
+        "if 'p3' in s or {'p5','p9'} <= s: print('STALLED at 0.0 mm'); sys.exit(1)\n"
+        "print('moved'); sys.exit(0)\n")
+    rep = os.path.join(d, "iso.json")
+    rc, out = run(["hvp_isolate.py", "--items", items, "--cmd", "python3 %s {items}" % orc, "--expect", "STALLED",
+                   "--all-causes", "--known", "p3;p5,p9", "--report", rep], d)
+    r = json.load(open(rep)) if os.path.exists(rep) else {}
+    case("isolate: two independent causes found, 1-minimal, match the known answer",
+         rc == 0 and "CAUSE 1  p3" in out and "CAUSE 2  p5 + p9" in out and "MATCHES_KNOWN" in out
+         and all(c["one_minimal"] for c in r.get("causes", [])) and "status" not in r, out)
+    case("isolate: a crash without the --expect text is UNRESOLVED, not the defect",
+         any(t["outcome"] == "UNRESOLVED" for t in r.get("trials", []))
+         and not any("p7" in c["items"] for c in r.get("causes", [])), out)
+    rc, out = run(["hvp_isolate.py", "--items", items, "--cmd", "python3 %s {items}" % orc, "--expect", "STALLED"], d)
+    case("isolate: without --all-causes the remaining cause is announced", rc == 0 and "MORE_CAUSES" in out, out)
+    nruns = int(out.split("runs ")[1].split()[0]) if "runs " in out else 999
+    case("isolate: one cause among 12 items in at most 16 runs (controls and reruns included)", nruns <= 16, out)
+    rc, out = run(["hvp_isolate.py", "--items", items, "--cmd", "echo STALLED; exit 1", "--expect", "STALLED"], d)
+    case("isolate: fails with every item off -> FAILS_WITHOUT_ITEMS", rc == 1 and "FAILS_WITHOUT_ITEMS" in out, out)
+    rc, out = run(["hvp_isolate.py", "--items", items, "--cmd", "exit 0"], d)
+    case("isolate: nothing fails -> NOT_REPRODUCED", rc == 1 and "NOT_REPRODUCED" in out, out)
+    cnt = os.path.join(d, "count")
+    rc, out = run(["hvp_isolate.py", "--items", items, "--cmd",
+                   "n=$(cat %s 2>/dev/null || echo 0); echo $((n+1)) > %s; [ $((n %% 2)) -eq 0 ] && exit 1 || exit 0" % (cnt, cnt)], d)
+    case("isolate: control outcome changes between repeats -> FLAKY", rc == 1 and "FLAKY" in out, out)
+    rc, out = run(["hvp_isolate.py", "--items", items, "--cmd", "python3 %s {items}" % orc, "--expect", "STALLED",
+                   "--known", "p4"], d)
+    case("isolate: a wrong known answer is reported", rc == 1 and "DIFFERS_FROM_KNOWN" in out, out)
+
+    # ------------------------------------------------ contact
+    def samples(name, spec):
+        pth = os.path.join(d, name)
+        with open(pth, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["pair", "s", "d"])
+            for pair, fn in spec.items():
+                for k in range(0, 51):
+                    w.writerow([pair, k, "%.4f" % fn(k)])
+        return pth
+    clear = lambda s: 1.0  # noqa: E731
+    dip = lambda c, depth, half: (lambda s: 1.0 if abs(s - c) > half else -depth)  # noqa: E731
+    intended = os.path.join(d, "intended.json")
+    write_json(intended, [{"pair": "pin--groove", "reason": "follower contact"}])
+    before = samples("before.csv", {"lever--housing": dip(11, 0.3, 1), "link--cover": clear,
+                                    "pin--groove": lambda s: -0.01, "arm--rib": dip(40, 0.05, 0)})
+    after = samples("after.csv", {"lever--housing": clear, "link--cover": dip(30, 0.2, 1),
+                                  "pin--groove": lambda s: -0.01, "arm--rib": dip(40, 0.05, 0)})
+    after2 = samples("after2.csv", {"lever--housing": dip(25, 0.3, 1), "link--cover": clear,
+                                    "pin--groove": lambda s: -0.01, "arm--rib": clear})
+    cm = os.path.join(d, "cmap.json")
+    rc, out = run(["hvp_contact.py", "map", before, "--limit", "0.2", "--intended", intended, "--out", cm], d)
+    ev = json.load(open(cm)) if os.path.exists(cm) else {}
+    case("contact map: first contact, worst pair, intended pair excluded, single sample flagged",
+         rc == 1 and "FIRST    lever--housing at s=10" in out and "intended (follower contact)" in out
+         and "SINGLE_SAMPLE" in out and ev.get("status") == "FAIL"
+         and ev.get("metrics", {}).get("min_clearance", {}).get("value") == -0.3
+         and ev.get("data", {}).get("where", {}).get("pair") == "lever--housing", out)
+    rc, out = run(["hvp_contact.py", "diff", before, after, "--limit", "0.2", "--intended", intended], d)
+    case("contact diff: one contact removed, another created -> WHACK_A_MOLE",
+         rc == 1 and "RESOLVED   lever--housing" in out and "NEW        link--cover" in out
+         and "PERSISTS   arm--rib" in out and "WHACK_A_MOLE" in out and "pin--groove" not in out, out)
+    rc, out = run(["hvp_contact.py", "diff", before, after2, "--limit", "0.2", "--intended", intended], d)
+    case("contact diff: same pair relocated along the stroke -> MOVED",
+         "MOVED      lever--housing" in out and "RESOLVED   arm--rib" in out and "WHACK_A_MOLE" in out, out)
+
+    # ------------------------------------------------ pathfit
+    G = [(0, 0), (40, 0), (10, 20), (50, 20)]
+
+    def along(P, n=400, ext=0.0):
+        L = [math.dist(P[i], P[i + 1]) for i in range(len(P) - 1)]
+        T, res = sum(L), []
+        for k in range(n + 1):
+            u = -ext + (T + 2 * ext) * k / n
+            if u < 0:
+                res.append((u, P[0][0] + u * (P[1][0] - P[0][0]) / L[0], P[0][1] + u * (P[1][1] - P[0][1]) / L[0]))
+                continue
+            if u > T:
+                i = len(L) - 1
+                res.append((u, P[-1][0] + (u - T) * (P[i + 1][0] - P[i][0]) / L[i],
+                            P[-1][1] + (u - T) * (P[i + 1][1] - P[i][1]) / L[i]))
+                continue
+            acc = 0.0
+            for i, l in enumerate(L):
+                if u <= acc + l or i == len(L) - 1:
+                    t = (u - acc) / l
+                    res.append((u, P[i][0] + t * (P[i + 1][0] - P[i][0]), P[i][1] + t * (P[i + 1][1] - P[i][1])))
+                    break
+                acc += l
+        return res
+
+    def wcsv(name, rows, hdr):
+        pth = os.path.join(d, name)
+        with open(pth, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(hdr)
+            w.writerows(rows)
+        return pth
+    guide = wcsv("guide.csv", G, ["x", "y"])
+    paths = {"FITS": along(G), "OFFSET": [(s, x + 0.5, y - 0.3) for s, x, y in along(G)],
+             "OVERTRAVEL": along(G, ext=3),
+             "LOCAL": along([(0, 0), (38, 0), (39.2, 0.4), (38.336, 1.109), (10, 20), (50, 20)]),
+             "MISMATCH": [(k, 25 - 25 * math.cos(math.pi * k / 200), 20 * k / 200 + 6 * math.sin(math.pi * k / 200))
+                          for k in range(201)]}
+    got = {}
+    for name, pts in paths.items():
+        rc, out = run(["hvp_pathfit.py", "--path", wcsv("path_%s.csv" % name, pts, ["s", "x", "y"]), "--guide", guide,
+                       "--width", "6.4", "--pin-d", "6.0"], d)
+        got[name] = (rc, out)
+    case("pathfit: five known paths classified FITS / OFFSET / OVERTRAVEL / LOCAL / MISMATCH",
+         all(("RESULT   %s" % k) in o for k, (_, o) in got.items()) and got["FITS"][0] == 0
+         and all(r == 1 for k, (r, _) in got.items() if k != "FITS"),
+         "\n".join("%s: %s" % (k, [l for l in o.splitlines() if l.startswith("RESULT")]) for k, (_, o) in got.items()))
+    case("pathfit: OFFSET recovers the planted shift (0.5, -0.3)", "SHIFT    best translation of the guide (0.5, -0.3)"
+         in got["OFFSET"][1], got["OFFSET"][1])
+    wg = os.path.join(d, "guide_from_path.csv")
+    rc, out = run(["hvp_pathfit.py", "--path", os.path.join(d, "path_MISMATCH.csv"), "--guide", guide, "--width", "6.4",
+                   "--pin-d", "6.0", "--write-guide", wg], d)
+    rc2, out2 = run(["hvp_pathfit.py", "--path", os.path.join(d, "path_MISMATCH.csv"), "--guide", wg, "--width", "6.4",
+                     "--pin-d", "6.0"], d)
+    case("pathfit: the guide derived from the path fits it", rc2 == 0 and "RESULT   FITS" in out2, out2)
+
+    # ------------------------------------------------ history
+    rh = new_repo(root, "repo-history")
+    tool = "import json\ng=json.load(open('params.json'))['gap']\njson.dump({'metrics':{'clr':{'value':round(g-%s,6),'limit':0.15,'sense':'min'}}},open('results/clr.json','w'))\n"
+    open(os.path.join(rh, "tool.py"), "w").write(tool % "0.1")
+    for gap, msg in ((0.30, "design: first throttle layout"), (0.20, "move bracket forward"),
+                     (0.20, "fix OD-01 clearance"), (0.20, "OD-01 간섭 수정")):
+        write_json(os.path.join(rh, "params.json"), {"gap": gap, "msg": msg})
+        sh("git add -A && git commit -qm '%s'" % msg, rh)
+    rc, out = run(["hvp_history.py", "--cmd", "python3 tool.py", "--out", "results/clr.json", "--metric", "clr",
+                   "--max", "0", "--report", "results/hist.json"], rh)
+    case("history: regression located, unsupported fix claims and STUCK reported, old commit NOT_RUN",
+         rc == 1 and "REGRESSED_AT" in out and "move bracket" in out.split("REGRESSED_AT")[1].splitlines()[0]
+         and out.count("CLAIM_NOT_SUPPORTED") == 2 and out.count("CLAIM_STILL_FAILING") == 2 and "STUCK" in out
+         and "NOT_RUN 1" in out, out)
+    open(os.path.join(rh, "tool.py"), "w").write(tool % "0.02")
+    rc, out = run(["hvp_history.py", "--cmd", "python3 tool.py", "--out", "results/clr.json", "--metric", "clr",
+                   "--paths", "params.json", "--overlay", "tool.py"], rh)
+    case("history: --overlay judges every old design with today's checker", rc == 0 and "0.28" in out
+         and "0.18" in out and "REGRESSED_AT" not in out and "NEWEST" in out, out)
+    st = subprocess.run(["git", "status", "--porcelain"], cwd=rh, capture_output=True, text=True).stdout.rstrip()
+    wts = subprocess.run(["git", "worktree", "list"], cwd=rh, capture_output=True, text=True).stdout.strip().splitlines()
+    case("history: only the edited checker and the report differ; worktrees removed",
+         set(l[3:] for l in st.splitlines()) <= {"tool.py", "results/hist.json"} and len(wts) == 1, st)
+
+    # ------------------------------------------------ rca
+    write_json(os.path.join(rh, "results/iso.json"), {"result": "ISOLATED", "causes": [{"items": ["p3"]}]})
+    good = {"issue": "OD-01", "symptom": "stalls at 0 mm", "symptom_evidence": ["ev:results/iso.json#/result"],
+            "hypotheses": [{"id": "H1", "claim": "p3 blocks", "test": "isolate", "if_true": "p3 found",
+                            "if_false": "FAILS_WITHOUT_ITEMS", "status": "confirmed",
+                            "evidence": ["ev:results/iso.json#/causes/0/items/0"]}],
+            "attempts": [{"ref": "abc", "hypothesis": "H1", "result": "moves 5 mm"}]}
+    write_json(os.path.join(rh, "rca_good.json"), good)
+    rc, out = run(["hvp_rca.py", "check", "rca_good.json"], rh)
+    case("rca: a consistent ledger passes", rc == 0 and "OK" in out, out)
+    bad = json.loads(json.dumps(good))
+    bad["hypotheses"] += [{"id": "H2", "claim": "groove too narrow", "test": "pathfit", "if_true": "x", "if_false": "y",
+                           "status": "ruled_out"},
+                          {"id": "H3", "claim": "mixed generation", "test": "audit", "if_true": "x",
+                           "status": "untested", "evidence": ["ev:results/none.json#/a"]}]
+    bad["attempts"] += [{"ref": "c2", "hypothesis": "H2"}, {"ref": "c3", "hypothesis": "H3"}, {"ref": "c4"}]
+    write_json(os.path.join(rh, "rca_bad.json"), bad)
+    rc, out = run(["hvp_rca.py", "check", "rca_bad.json"], rh)
+    case("rca: missing evidence, undecidable test, broken citation, fixes without a confirmed cause",
+         rc == 1 and "NO_EVIDENCE H2" in out and "NO_TEST H3" in out and "BROKEN_CITATION H3" in out
+         and "FIX_ON_RULED_OUT attempt c2" in out and "FIX_WITHOUT_CAUSE attempt c3" in out
+         and "FIX_WITHOUT_CAUSE attempt c4" in out, out)
+    hist = json.loads(json.dumps(good))
+    hist["hypotheses"].append({"id": "H2", "claim": "groove too narrow", "test": "pathfit", "if_true": "x",
+                               "if_false": "y", "status": "ruled_out", "evidence": ["ev:results/iso.json#/result"]})
+    hist["attempts"].insert(0, {"ref": "old1", "hypothesis": "H2", "result": "still FAIL"})
+    write_json(os.path.join(rh, "rca_hist.json"), hist)
+    rc, out = run(["hvp_rca.py", "check", "rca_hist.json"], rh)
+    case("rca: a finished attempt on a later ruled-out hypothesis is history (PAST), not a problem",
+         rc == 0 and "PAST     FIX_ON_RULED_OUT attempt old1" in out and "PROBLEM" not in out, out)
+    rc, out = run(["hvp_rca.py", "report", "rca_bad.json", "--md"], rh)
+    case("rca: markdown report groups confirmed / ruled out / untested", "#### 확인됨" in out and "#### 배제됨" in out
+         and "#### 아직 시험 안 함" in out and "| c2 | H2 |" in out, out)
+
+    # ------------------------------------------------ fixloop across sessions
+    vf = os.path.join(root, "pv.json")
+    write_json(vf, {"verdict": "ACCEPTABLE", "checks": {"results/clr.json": {"before": "FAIL", "after": "PASS",
+                                                                             "class": "FIXED"}}})
+    run(["hvp_fixloop.py", "open", "--sid", "S1", "--issue", "OD-01", "--checks", "results/clr.json", "--cause", "gap"], rh)
+    run(["hvp_fixloop.py", "attempt", "--sid", "S1", "--issue", "OD-01", "--change", "gap", "--verdicts", vf], rh)
+    run(["hvp_fixloop.py", "close", "--sid", "S1", "--issue", "OD-01", "--result", "fixed"], rh)
+    rc, out = run(["hvp_fixloop.py", "export", "--sid", "S1", "--issue", "OD-01"], rh)
+    exported = os.path.join(rh, "verification", "fixlog", "OD-01.json")
+    common = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=rh,
+                            capture_output=True, text=True).stdout.strip()
+    os.remove(os.path.join(common, "hvp-sessions", "S1.fixlog.json"))   # a new clone has no session ledgers
+    rc, out = run(["hvp_fixloop.py", "open", "--sid", "S2", "--issue", "OD-01-again", "--checks", "results/clr.json",
+                   "--cause", "gap again"], rh)
+    case("fixloop: a reopened issue finds the exported earlier loop -> PERSISTENT",
+         os.path.isfile(exported) and "PRIOR   verification/fixlog/OD-01.json" in out and "PERSISTENT 1" in out
+         and "1 closed as fixed" in out, out)
+    rc, out = run(["hvp_fixloop.py", "check", "--sid", "S2", "--issue", "OD-01-again"], rh)
+    case("fixloop: PERSISTENT stops until a confirmed root cause is linked", rc == 3 and "PERSISTENT" in out, out)
+    rc, out = run(["hvp_fixloop.py", "open", "--sid", "S3", "--issue", "OD-01-third", "--checks", "results/clr.json",
+                   "--cause", "p3", "--rca", "rca_good.json"], rh)
+    rc, out = run(["hvp_fixloop.py", "check", "--sid", "S3", "--issue", "OD-01-third"], rh)
+    case("fixloop: with a confirmed hypothesis linked the loop may continue", rc == 0 and "CONTINUE" in out, out)
+
+
 def main():
     root = tempfile.mkdtemp(prefix="hvp-selftest-")
     repo = os.path.join(root, "repo")
@@ -634,6 +851,7 @@ def main():
     case("determinism: temporary worktrees removed", len(wts) == 1, "\n".join(wts))
 
     fix_cases(root)
+    persist_cases(root)
 
     n_ok = sum(ok for _, ok in RESULTS)
     print("\nSELFTEST %d/%d passed (%s)" % (n_ok, len(RESULTS), root))

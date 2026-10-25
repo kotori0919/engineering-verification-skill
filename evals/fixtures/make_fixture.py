@@ -199,6 +199,94 @@ def scenario_brief(root):
         "blocks": ["clearance 수정", "벽 강도 확정 판정"], "status": "open"}], ensure_ascii=False, indent=1) + "\n")
 
 
+GROOVE = """import csv, hashlib, json, math, os
+h = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
+p = json.load(open("params/latch.json"))
+G, R, cx, cy = p["groove_centerline"], p["lever_r"], p["lever_pivot"][0], p["lever_pivot"][1]
+a = (p["groove_width"] - p["pin_d"]) / 2.0              # allowed deviation of the pin centre
+def near(x, y):
+    best = None
+    for (x1, y1), (x2, y2) in zip(G, G[1:]):
+        dx, dy = x2 - x1, y2 - y1
+        t = max(0.0, min(1.0, ((x - x1) * dx + (y - y1) * dy) / (dx * dx + dy * dy)))
+        fx, fy = x1 + t * dx, y1 + t * dy
+        d = math.hypot(x - fx, y - fy)
+        side = dx * (y - fy) - dy * (x - fx)
+        if best is None or d < best[0]:
+            best = (d, "pin--wall_left" if side >= 0 else "pin--wall_right")
+    return best
+os.makedirs("data", exist_ok=True)
+rows, worst = [], None
+for k in range(0, 41):
+    s = 0.5 * k                                          # handle travel, mm
+    x, y = cx - math.sqrt(R * R - (s - cy) ** 2), s      # pin centre held by the lever (groove ignored)
+    e, wall = near(x, y)
+    c = round(a - e, 4)
+    for pair in ("pin--wall_left", "pin--wall_right"):
+        rows.append([pair, s, c if pair == wall else round(a + e, 4)])
+    if worst is None or c < worst[0]:
+        worst = (c, s, wall)
+with open("data/clearance.csv", "w", newline="") as f:
+    wr = csv.writer(f); wr.writerow(["pair", "s", "d"]); wr.writerows(rows)
+with open("data/pin_path.csv", "w", newline="") as f:
+    wr = csv.writer(f); wr.writerow(["s", "x", "y"])
+    for k in range(0, 41):
+        s = 0.5 * k
+        wr.writerow([s, round(cx - math.sqrt(R * R - (s - cy) ** 2), 6), s])
+with open("data/groove_centerline.csv", "w", newline="") as f:
+    wr = csv.writer(f); wr.writerow(["x", "y"]); wr.writerows(G)
+st = "FAIL" if worst[0] < 0 else ("PASS_BELOW_TARGET" if worst[0] < 0.05 else "PASS")
+json.dump({"layer": "L2", "question": "motion", "part": "latch handle pin / Z groove",
+           "inputs": {"params/latch.json": h("params/latch.json")},
+           "metrics": {"min_clearance_mm": {"value": worst[0], "limit": 0.0, "target": 0.05, "sense": "min"}},
+           "data": {"where": {"s_mm": worst[1], "pair": worst[2]}},
+           "scope": "pin centre held by the lever vs groove walls, handle travel 0..20 mm, 0.5 mm steps",
+           "assumptions": ["rigid parts", "pin follows the lever arc (groove does not move the lever)"],
+           "limitations": ["sampled every 0.5 mm", "2D in the groove plane", "no tolerance stack"],
+           "criteria_source": {"min_clearance_mm": "README"},
+           "provenance": {"command": "python3 tools/check_groove.py"},
+           "status": st}, open("results/groove.json", "w"), indent=1)
+print("groove", st, worst)
+"""
+
+LATCH_README = """# latch-handle (mock)
+
+A handle slides 20 mm; a pin on it runs in a Z-shaped groove, and the same pin sits on a lever
+(radius `lever_r`, pivot `lever_pivot`). Parameters: `params/latch.json`. Checker:
+`tools/check_groove.py` writes `results/groove.json` and samples in `data/`.
+Requirement: pin-to-groove clearance limit 0.0 mm, target 0.05 mm (customer). Issue LH-01:
+the pin binds in the groove. Two earlier fix loops are recorded in `verification/fixlog/`.
+"""
+
+
+def scenario_persist(root):
+    """LH-01: interference that came back after two "fixed" loops (lever arc vs drawn Z groove)."""
+    w(root, "README.md", LATCH_README)
+    w(root, "tools/check_groove.py", GROOVE)
+    os.makedirs(os.path.join(root, "results"), exist_ok=True)
+    prm = {"pin_d": 6.0, "groove_width": 6.4, "lever_r": 20.0, "lever_pivot": [20.0, 10.0],
+           "groove_centerline": [[2.68, 0.0], [0.0, 5.0], [0.0, 15.0], [2.68, 20.0]]}
+    steps = (("latch: first Z groove layout", {}),
+             ("fix LH-01: relieve groove corners", {"groove_centerline": [[2.68, 0.0], [0.4, 5.0], [0.4, 15.0], [2.68, 20.0]]}),
+             ("LH-01 간섭 수정: groove width 6.4 -> 6.5", {"groove_width": 6.5}))
+    for msg, change in steps:
+        prm.update(change)
+        w(root, "params/latch.json", json.dumps(prm, indent=1) + "\n")
+        sh("python3 tools/check_groove.py", root)
+        sh("git add -A && git commit -qm '%s'" % msg, root)
+    loops = [{"sid": "s-0917", "cause": "groove corner protrudes into the pin path", "checks": ["results/groove.json"],
+              "budget": 3, "opened": 1758067200, "result": "fixed", "note": "corners relieved 0.4 mm, contact at s=5 reduced",
+              "attempts": [{"change": "relieve corners 0.4 mm", "params": {"corner_x": "0.4"}, "verdict": "ACCEPTABLE",
+                            "status": {"results/groove.json": "PASS"}, "before": {"results/groove.json": "FAIL"},
+                            "classes": {}, "reasons": [], "time": 1758070000}]},
+             {"sid": "s-1003", "cause": "groove too narrow", "checks": ["results/groove.json"],
+              "budget": 3, "opened": 1759449600, "result": "fixed", "note": "width +0.1 mm",
+              "attempts": [{"change": "groove width 6.4 -> 6.5", "params": {"groove_width": "6.5"}, "verdict": "ACCEPTABLE",
+                            "status": {"results/groove.json": "PASS"}, "before": {"results/groove.json": "FAIL"},
+                            "classes": {}, "reasons": [], "time": 1759452000}]}]
+    w(root, "verification/fixlog/LH-01.json", json.dumps({"issue": "LH-01", "loops": loops}, indent=1) + "\n")
+
+
 SCENARIOS = {k[len("scenario_"):]: v for k, v in globals().items() if k.startswith("scenario_")}
 
 
