@@ -78,5 +78,13 @@
  {
   "query": "아두이노 스텝모터 코드가 가끔 탈조해. 코드 봐 줘",
   "should_trigger": false
+ },
+ {
+  "query": "이 AI CAD 에이전트가 링키지 설계를 E2E로 어떻게 하는지 세션 로그랑 산출물로 검증해",
+  "should_trigger": true
+ },
+ {
+  "query": "에이전트가 '간섭 없음, 설계 완료'라고 했는데 도구 성공 로그만 있어. 실제 형상이 검증됐는지 봐 줘",
+  "should_trigger": true
  }
 ]
